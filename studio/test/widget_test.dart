@@ -4,6 +4,8 @@ import 'package:biguess_studio/presentation/studio_status.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+import 'package:biguess_studio/app/studio_icon_asset.dart';
 
 void main() {
   Future<void> open(WidgetTester tester, Size size) async {
@@ -14,6 +16,18 @@ void main() {
     await tester.pumpWidget(const StudioApp());
     await tester.pumpAndSettle();
   }
+
+  testWidgets('every supplied Studio SVG decodes in the production renderer', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      for (final asset in StudioIconAsset.values) {
+        final picture = await vg.loadPicture(SvgAssetLoader(asset.path), null);
+        expect(picture.size.isEmpty, isFalse, reason: asset.filename);
+        picture.picture.dispose();
+      }
+    });
+  });
 
   testWidgets('desktop navigation and inert login', (tester) async {
     await open(tester, const Size(1440, 900));

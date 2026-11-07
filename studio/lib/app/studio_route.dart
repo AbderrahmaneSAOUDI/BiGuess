@@ -1,19 +1,19 @@
-import 'package:flutter/material.dart';
+import 'studio_icon_asset.dart';
 
 // Public navigation metadata only. These routes confer no authorization.
 enum StudioRoute {
-  dashboard('/dashboard', 'Dashboard', Icons.dashboard_outlined),
-  topics('/topics', 'Topics', Icons.category_outlined),
-  myPacks('/my-packs', 'My Packs', Icons.inventory_2_outlined),
-  cards('/cards', 'Cards', Icons.style_outlined),
-  profile('/profile', 'Profile', Icons.person_outline),
-  login('/login', 'Sign in', Icons.login),
-  notFound('/not-found', 'Page not found', Icons.search_off);
+  dashboard('/dashboard', 'Dashboard', StudioIconAsset.dashboard),
+  topics('/topics', 'Topics', StudioIconAsset.topics),
+  myPacks('/my-packs', 'My Packs', StudioIconAsset.packs),
+  cards('/cards', 'Cards', StudioIconAsset.cards),
+  profile('/profile', 'Profile', StudioIconAsset.profile),
+  login('/login', 'Sign in', StudioIconAsset.signIn),
+  notFound('/not-found', 'Page not found', StudioIconAsset.error);
 
   const StudioRoute(this.path, this.label, this.icon);
   final String path;
   final String label;
-  final IconData icon;
+  final StudioIconAsset icon;
 
   static const destinations = [dashboard, topics, myPacks, cards, profile];
 

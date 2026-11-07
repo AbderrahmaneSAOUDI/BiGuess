@@ -11,6 +11,7 @@ dependencies:
     sdk: flutter
   flutter_web_plugins:
     sdk: flutter
+  flutter_svg: 2.3.0
 
 dev_dependencies:
   flutter_test:
@@ -21,3 +22,12 @@ flutter:
   uses-material-design: true
   assets:
     - assets/brand/biguess_logo.webp
+    - assets/icons/dashboard.svg
+    - assets/icons/topic.svg
+    - assets/icons/pack.svg
+    - assets/icons/card.svg
+    - assets/icons/profile.svg
+    - assets/icons/signin.svg
+    - assets/icons/menu.svg
+    - assets/icons/error.svg
+    - assets/icons/offline.svg

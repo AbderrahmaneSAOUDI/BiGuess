@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../app/studio_route.dart';
+import '../app/studio_icon_asset.dart';
 import '../app/studio_theme.dart';
 import 'studio_brand.dart';
+import 'studio_icon.dart';
 import 'studio_status.dart';
 
 class StudioShell extends StatelessWidget {
@@ -25,7 +27,7 @@ class StudioShell extends StatelessWidget {
         padding: const EdgeInsets.only(right: 20),
         child: OutlinedButton.icon(
           onPressed: () => onNavigate(StudioRoute.login),
-          icon: const Icon(Icons.login, size: 18),
+          icon: const StudioIcon(StudioIconAsset.signIn, size: 18),
           label: const Text('Sign in'),
         ),
       );
@@ -33,6 +35,14 @@ class StudioShell extends StatelessWidget {
         appBar: wide
             ? null
             : AppBar(
+                leading: Builder(
+                  builder: (context) => IconButton(
+                    tooltip: MaterialLocalizations.of(context)
+                        .openAppDrawerTooltip,
+                    icon: const StudioIcon(StudioIconAsset.menu),
+                    onPressed: () => Scaffold.of(context).openDrawer(),
+                  ),
+                ),
                 titleSpacing: 0,
                 title: const StudioBrand(),
                 actions: [signIn],
@@ -56,7 +66,7 @@ class StudioShell extends StatelessWidget {
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(6),
                             ),
-                            leading: Icon(destination.icon, size: 20),
+                            leading: StudioIcon(destination.icon, size: 20),
                             title: Text(destination.label),
                             textColor: StudioTheme.muted,
                             iconColor: StudioTheme.muted,
@@ -175,7 +185,7 @@ class _Sidebar extends StatelessWidget {
             destinations: [
               for (final destination in StudioRoute.destinations)
                 NavigationRailDestination(
-                  icon: Icon(destination.icon),
+                  icon: StudioIcon(destination.icon),
                   label: Text(destination.label),
                 ),
             ],

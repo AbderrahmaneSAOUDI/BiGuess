@@ -1,27 +1,26 @@
-# Studio icons to supply
+# Studio icons
 
-Put the following files in this folder (`studio/assets/icons/`). These cover
-only the current Studio preview, not future editor or publishing features.
+Optimized SVG copies of the user-provided sources in `../../../assets/icons/`.
+Keep them as vectors; no WebP conversion is required.
 
-| Filename | Symbol | Used for |
-| --- | --- | --- |
-| `dashboard.webp` | Four-square grid | Dashboard navigation and empty state |
-| `topics.webp` | Category shapes | Topics navigation and empty state |
-| `packs.webp` | Archive box | My Packs navigation and empty state |
-| `cards.webp` | Two overlapping cards | Cards navigation and empty state |
-| `profile.webp` | Person outline | Profile navigation and empty state |
-| `sign-in.webp` | Arrow entering a doorway | Sign-in link and placeholder |
-| `menu.webp` | Three horizontal lines | Open mobile navigation |
-| `error.webp` | Circle with exclamation mark | Error and unavailable-page states |
-| `offline.webp` | Cloud with diagonal slash | Offline state |
+| Filename | Current use |
+| --- | --- |
+| `dashboard.svg` | Dashboard navigation and empty state |
+| `topic.svg` | Topics navigation and empty state |
+| `pack.svg` | My Packs navigation and empty state |
+| `card.svg` | Cards navigation and empty state |
+| `profile.svg` | Profile navigation and empty state |
+| `signin.svg` | Sign-in link and placeholder |
+| `menu.svg` | Open mobile navigation |
+| `error.svg` | Error and unavailable-page states |
+| `offline.svg` | Offline state |
 
-Use one consistent outline family: **96×96 px transparent WebP**, with the icon
-centered and drawn to the same optical size. Use charcoal **#27272A**, no colored
-background, gradients, shadows or baked-in text. Aim for a 2 px stroke at a
-24×24 display size (8 px in the 96×96 file), with a little clear edge padding.
-The built-in loading spinner does not need an image.
+`StudioIcon` loads only bundled assets through the pinned `flutter_svg` renderer,
+inheriting the enclosing icon color so selections and muted states remain
+consistent. Buttons, navigation labels and status text own accessibility names.
+The built-in loading spinner remains unchanged.
 
-The app continues to use its built-in Material icons until these files are
-provided and wired in. This directory is deliberately not registered as a Flutter
-asset directory yet, so this README and future unreviewed files are not bundled.
-The supplied BiGuess logo is already copied to `../brand/biguess_logo.webp`.
+Only these nine files are individually registered in `studio/pubspec.yaml`.
+This README and the unused source icons are not included in the browser bundle.
+After changing a source, optimize it with `scripts/svgo.config.mjs` from the repo
+root, copy the result here and run `bash studio/scripts/check.sh all`.

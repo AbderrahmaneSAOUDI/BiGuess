@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../app/studio_theme.dart';
+import '../app/studio_icon_asset.dart';
+import 'studio_icon.dart';
 
 enum StudioStatusKind { empty, loading, offline, error }
 
@@ -9,13 +11,13 @@ class StudioStatus extends StatelessWidget {
   const StudioStatus({
     super.key,
     this.kind = StudioStatusKind.empty,
-    this.icon = Icons.space_dashboard_outlined,
+    this.icon = StudioIconAsset.dashboard,
     required this.title,
     required this.message,
   });
 
   final StudioStatusKind kind;
-  final IconData icon;
+  final StudioIconAsset icon;
   final String title;
   final String message;
 
@@ -35,10 +37,10 @@ class StudioStatus extends StatelessWidget {
                 child: CircularProgressIndicator(semanticsLabel: 'Loading'),
               )
             else
-              Icon(
+              StudioIcon(
                 switch (kind) {
-                  StudioStatusKind.offline => Icons.cloud_off_outlined,
-                  StudioStatusKind.error => Icons.error_outline,
+                  StudioStatusKind.offline => StudioIconAsset.offline,
+                  StudioStatusKind.error => StudioIconAsset.error,
                   _ => icon,
                 },
                 size: 24,

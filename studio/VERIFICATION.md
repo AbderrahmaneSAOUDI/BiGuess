@@ -65,3 +65,24 @@ The app bundles only the approved logo as media; the public-boundary check now
 allows that exact asset instead of rejecting all application media. Icon requests
 and delivery specifications are in `assets/icons/README.md`; Material icons remain
 in use pending delivery. The current verification gates still apply.
+
+
+## Supplied SVG icon integration
+
+All 22 user-supplied SVG sources were conservatively optimized with SVGO 4.0.2,
+from 27,880 to 25,427 bytes (8.8% smaller). Every source rendered pixel-identically
+before and after at 96 and 384 px using librsvg. Original geometry, colors,
+source credits, IDs and filenames are retained. Studio now bundles only the nine
+icons needed for its existing public preview, as self-contained local copies.
+
+The direct dependency allowlist now includes pinned `flutter_svg` 2.3.0. Only
+asset loading is used. The build boundary allows exactly the logo and nine SVGs
+and rejects SVG embedded browser code/external resources. A new test decodes
+every bundled icon with the actual Flutter SVG renderer; the Studio suite now
+has eight tests. Browser navigation, 200% text, accessible names and offline
+behavior retain their existing checks. No additional app features are enabled.
+
+Icon integration verification: all eight Studio tests, Studio analysis and release
+web build pass. Desktop/mobile Chrome smoke checks pass with local SVG assets,
+zero external requests and offline navigation. Root Mobile's 249 tests and
+158 tooling tests pass; source/asset comparisons and script syntax checks pass.
