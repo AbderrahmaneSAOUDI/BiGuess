@@ -1,11 +1,11 @@
 ---
 name: git-commit-push
-description: Complete BiGuess work with a validated version-triad bump and a scoped commit/push that preserves unrelated staged and unstaged changes. Use after substantive edits or when asked to commit and push.
+description: Complete BiGuess work with a validated version-triad bump and a scoped commit/push that preserves unrelated staged and unstaged changes. Use after every user prompt that changes repository files or when asked to commit and push.
 ---
 
 # Commit and push task-owned changes
 
-Run `flutter test` before substantive completion, per `AGENTS.md`. Inspect `git status --short` and distinguish the task's files from existing work. The helper requires a conventional summary and explicit scope:
+Complete this workflow before the final response to every user prompt that changes task-owned repository files, unless the user explicitly requests otherwise. Include small fixes and documentation edits; skip empty commits for read-only prompts or when there is no task-owned diff. Run the required checks in `AGENTS.md` before committing. Inspect `git status --short` and distinguish the task's files from existing work. The helper requires a conventional summary and explicit scope:
 
 ```bash
 python3 .agents/hooks/git_auto_commit_push.py "chore(agents): update guidance" --paths AGENTS.md .agents --dry-run

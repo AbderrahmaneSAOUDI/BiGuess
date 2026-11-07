@@ -5,6 +5,7 @@ description: Date-based synchronized versions, scoped commits, and required Git 
 
 # Version and Git lifecycle
 
+- After every completed user prompt that creates or changes task-owned repository files, run the required checks, commit those changes, and push to GitHub before the final response. This applies to small fixes and documentation edits as well as substantive changes, without asking again. Follow any explicit user instruction to defer committing or pushing. Read-only prompts and prompts with no task-owned diff require no empty commit.
 - Snapshot status/index at task start and recheck before committing: this checkout can change concurrently. Preserve unrelated edits and pre-staged files rather than clearing or committing them.
 - After substantive edits, required Flutter tests must pass. Run `python3 .agents/hooks/version_increment.py` once at completion; it computes the date minor from `2025-05-27` in Africa/Algiers and a patch/build beyond HEAD. Repeated calls before a commit are idempotent; all three files are repaired even if pubspec already has the target version.
 - The triad is pubspec `version: major.minor.patch+build`, manifest `latest_version` and `build_number`, and `AppConstants.defaultVersion` without build. Preserve other manifest metadata. Invalid input must fail before any writes.

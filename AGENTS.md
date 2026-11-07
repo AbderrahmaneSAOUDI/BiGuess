@@ -46,7 +46,7 @@ python3 -m unittest discover -s .agents/tests -v
 
 Choose additional checks from the test map. Record pre-existing failures separately from regressions; do not claim a passing gate when its exit code failed.
 
-After substantive edits and successful required tests, run `.agents/hooks/version_increment.py` (minor = elapsed days since `2025-05-27` in Africa/Algiers), then the scoped Git helper:
+After every user prompt that changes task-owned repository files, complete the required checks, commit, and push to GitHub before the final response, unless the user explicitly requests otherwise. Do not create empty commits for read-only prompts. Follow the [Git lifecycle rule](.agents/rules/git-workflow-and-versioning.md). After successful required tests, run `.agents/hooks/version_increment.py` (minor = elapsed days since `2025-05-27` in Africa/Algiers), then the scoped Git helper:
 
 ```bash
 python3 .agents/hooks/version_increment.py
