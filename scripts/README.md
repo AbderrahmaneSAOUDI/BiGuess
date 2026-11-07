@@ -112,7 +112,20 @@ Choose **11 — run**, or open the device picker directly:
 ./scripts/run.sh run
 ```
 
-Choose a device, then a build type:
+Choose a device, then a build type. **Browser selections (Chrome/Edge) launch
+BiGuess Studio from `studio/`; native selections launch BiGuess Mobile from the
+repository root.** The menu prints the selected application and project directory.
+Mobile's native SQLite storage does not compile for browsers; do not launch the
+root Mobile entry point with `flutter run -d chrome`.
+
+To run Studio directly:
+
+```bash
+cd studio
+flutter run -d chrome --debug
+```
+
+The menu supports these build types:
 
 - **Debug:** development with hot reload. On Android, press `d` to detach and keep
   the app running; `q` stops the app. Neither action uninstalls it.
@@ -128,7 +141,7 @@ modes, not separate Stable/Beta distribution channels or side-by-side apps.
 The first build, switching modes, or changing source can take time. Flutter
 automatically reuses cached build work; Profile does not promise faster compilation.
 
-You can also specify a device directly:
+You can also specify a **native Mobile** device directly (this shortcut stays at the repository root):
 
 ```bash
 ./scripts/run.sh run -d DEVICE_ID

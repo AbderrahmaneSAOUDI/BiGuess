@@ -200,10 +200,10 @@ def prompt_input(prompt: str, default: str = "", is_main_menu: bool = False) -> 
     return val if val else default
 
 
-def run_command(cmd: list) -> None:
+def run_command(cmd: list, cwd: Path | None = None) -> None:
     """Run one tool and preserve failures."""
     try:
-        result = subprocess.run(cmd, cwd=str(REPO_ROOT))
+        result = subprocess.run(cmd, cwd=str(REPO_ROOT if cwd is None else cwd))
         if result.returncode:
             raise ScriptFailed(result.returncode)
     except KeyboardInterrupt:
@@ -389,6 +389,7 @@ def task_run_app() -> None:
     if not devices:
         print("No devices found. Connect a device or start an emulator, then try again.")
         return
+    print("Browser devices open Studio Web (studio/); native devices open BiGuess Mobile.")
     names = [str(device.get("name") or device["id"]) for device in devices]
     name_width = max(_display_width(name) for name in names)
     for index, (device, name) in enumerate(zip(devices, names), 1):
@@ -402,7 +403,13 @@ def task_run_app() -> None:
             break
         print(f"Choose a device number from 1 to {len(devices)}.")
     device = devices[int(choice) - 1]
-    android = str(device.get("targetPlatform", "")).startswith("android")
+    platform = str(device.get("targetPlatform", ""))
+    browser = platform.startswith("web") or device["id"] in ("chrome", "edge", "web-server")
+    project_root = REPO_ROOT / "studio" if browser else REPO_ROOT
+    if browser and not (project_root / "pubspec.yaml").is_file():
+        print("Studio Web is missing: expected studio/pubspec.yaml. No app was launched.", file=sys.stderr)
+        raise ScriptFailed(1)
+    android = platform.startswith("android")
     print(f"\n{BOLD}{BLUE}▶ Choose app build type{RESET}")
     print(f"  {CYAN}[1]{RESET} Debug   — development with hot reload")
     print(f"  {CYAN}[2]{RESET} Profile — recommended for local play and performance testing")
@@ -421,7 +428,9 @@ def task_run_app() -> None:
     command = ["flutter", "run", "-d", device["id"], f"--{mode}"]
     if standalone:
         command.append("--no-resident")
-    print(f"\n{DIM}$ {shlex.join(command)}{RESET}\n")
+    print(f"\nApp: {'BiGuess Studio Web' if browser else 'BiGuess Mobile'}")
+    print(f"Project: {project_root}")
+    print(f"{DIM}$ {shlex.join(command)}{RESET}\n")
     print("Flutter will build, install, and open the app. Cached builds are reused.")
     if standalone:
         print("The menu returns after launch; BiGuess remains installed and running.\n")
@@ -429,7 +438,10 @@ def task_run_app() -> None:
         print("After the app opens: d = detach and keep it running; q = stop the app.\n")
     else:
         print("Keep this terminal open while using the app.\n")
-    run_command(command)
+    if browser:
+        run_command(command, cwd=project_root)
+    else:
+        run_command(command)
     if standalone:
         print(f"\n{GREEN}BiGuess installed and launched. Reopen it from your phone's app list.{RESET}")
 

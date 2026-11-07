@@ -43,11 +43,49 @@ class FlutterRunTests(unittest.TestCase):
         discover.assert_called_once_with(['flutter', 'devices', '--machine'], cwd=str(ROOT),
                                          capture_output=True, text=True, timeout=30)
         self.assertEqual(prompt.call_count, 2)
-        run.assert_called_once_with(['flutter', 'run', '-d', 'browser-id', '--profile'])
+        run.assert_called_once_with(['flutter', 'run', '-d', 'browser-id', '--profile'], cwd=ROOT / 'studio')
         self.assertIn('My phone', self.output.getvalue())
         self.assertIn('Chrome', self.output.getvalue())
         self.assertIn('browser-id', self.output.getvalue())
         self.assertNotIn('Run mode', self.output.getvalue())
+
+    def test_reported_chrome_debug_failure_launches_studio_instead_of_mobile(self):
+        with patch.object(menu.subprocess, 'run', return_value=self.discovery()), \
+                patch.object(menu, 'read_line_with_esc', side_effect=['2', '1']), \
+                patch.object(menu, 'run_command') as run:
+            menu.task_run_app()
+        run.assert_called_once_with(['flutter', 'run', '-d', 'browser-id', '--debug'],
+                                    cwd=ROOT / 'studio')
+        self.assertIn('BiGuess Studio Web', self.output.getvalue())
+        self.assertIn(str(ROOT / 'studio'), self.output.getvalue())
+
+    def test_native_desktop_still_launches_root_mobile(self):
+        devices = [{'id': 'linux', 'name': 'Linux', 'targetPlatform': 'linux-x64'}]
+        with patch.object(menu.subprocess, 'run', return_value=self.discovery(devices)), \
+                patch.object(menu, 'read_line_with_esc', side_effect=['1', '1']), \
+                patch.object(menu, 'run_command') as run:
+            menu.task_run_app()
+        run.assert_called_once_with(['flutter', 'run', '-d', 'linux', '--debug'])
+        self.assertIn('BiGuess Mobile', self.output.getvalue())
+
+    def test_missing_studio_never_falls_back_to_native_mobile_project(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(menu, 'REPO_ROOT', Path(directory)), \
+                patch.object(menu.subprocess, 'run', return_value=self.discovery()), \
+                patch.object(menu, 'read_line_with_esc', return_value='2'), \
+                patch.object(menu, 'run_command') as run:
+            self.assertEqual(menu.run_single_task('run'), 1)
+        run.assert_not_called()
+        self.assertIn('Studio Web is missing', self.output.getvalue())
+
+    def test_runner_uses_selected_project_directory_and_preserves_errors(self):
+        for project in (ROOT, ROOT / 'studio'):
+            with self.subTest(project=project), \
+                    patch.object(menu.subprocess, 'run', return_value=subprocess.CompletedProcess([], 7)) as run:
+                with self.assertRaises(menu.ScriptFailed) as failure:
+                    menu.run_command(['flutter', 'run'], cwd=project)
+                self.assertEqual(failure.exception.returncode, 7)
+                run.assert_called_once_with(['flutter', 'run'], cwd=str(project))
 
     def test_default_device_and_invalid_selection_reprompt(self):
         with patch.object(menu.subprocess, 'run', return_value=self.discovery()), \
@@ -131,7 +169,7 @@ class FlutterRunTests(unittest.TestCase):
                 patch.object(menu, 'run_command') as run:
             menu.task_run_app()
         signing.assert_not_called()
-        run.assert_called_once_with(['flutter', 'run', '-d', 'browser-id', '--release'])
+        run.assert_called_once_with(['flutter', 'run', '-d', 'browser-id', '--release'], cwd=ROOT / 'studio')
 
     def test_build_type_cancel_or_invalid_choice_does_not_launch_prematurely(self):
         for answers in (['1', '0'], ['1', 'invalid', '0']):
