@@ -1,26 +1,32 @@
 import 'package:flutter/material.dart';
 
+import 'studio_brand_colors.dart';
+
 abstract final class StudioTheme {
   static const wideBreakpoint = 800.0;
-  // Logo colors. Keep the multicolor identity in the logo, with a blue UI accent.
-  static const blue = Color(0xFF68B8F8);
-  static const green = Color(0xFF38A858);
-  static const coral = Color(0xFFE84838);
-  static const yellow = Color(0xFFF8E8A8);
-  static const primary = Color(0xFF175D93);
-  static const ink = Color(0xFF27272A);
+  static const primary = BiGuessColors.blue;
+  static const ink = BiGuessColors.outline;
   static const muted = Color(0xFF626268);
   static const canvas = Color(0xFFFFFFFF);
   static const sidebar = Color(0xFFFAFAFA);
-  static const selected = Color(0xFFECF5FD);
+  // Blue at 8% over white; brand accents stay restrained on neutral surfaces.
+  static const selected = Color(0xFFF0F5FE);
   static const line = Color(0xFFE7E7EA);
 
   static ThemeData get light {
     final base = ThemeData(
       useMaterial3: true,
       colorScheme: ColorScheme.fromSeed(
-        seedColor: blue,
-        primary: primary,
+        seedColor: BiGuessColors.blue,
+        primary: BiGuessColors.blue,
+        onPrimary: BiGuessColors.outline,
+        secondary: BiGuessColors.green,
+        onSecondary: BiGuessColors.outline,
+        tertiary: BiGuessColors.yellow,
+        onTertiary: BiGuessColors.outline,
+        error: BiGuessColors.red,
+        // Neutral black keeps text readable on the exact brand red.
+        onError: Colors.black,
         surface: Colors.white,
         onSurface: ink,
       ),
@@ -28,6 +34,7 @@ abstract final class StudioTheme {
     return base.copyWith(
       scaffoldBackgroundColor: canvas,
       dividerColor: line,
+      focusColor: BiGuessColors.blue.withValues(alpha: 0.12),
       textTheme: base.textTheme
           .apply(bodyColor: ink, displayColor: ink)
           .copyWith(
@@ -58,6 +65,7 @@ abstract final class StudioTheme {
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
           foregroundColor: ink,
+          overlayColor: BiGuessColors.blue,
           minimumSize: const Size(48, 44),
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           side: const BorderSide(color: line),

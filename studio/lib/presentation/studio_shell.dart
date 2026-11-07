@@ -66,11 +66,17 @@ class StudioShell extends StatelessWidget {
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(6),
                             ),
-                            leading: StudioIcon(destination.icon, size: 20),
+                            leading: StudioIcon(
+                              destination.icon,
+                              size: 20,
+                              color: destination == route
+                                  ? StudioTheme.primary
+                                  : StudioTheme.muted,
+                            ),
                             title: Text(destination.label),
                             textColor: StudioTheme.muted,
                             iconColor: StudioTheme.muted,
-                            selectedColor: StudioTheme.primary,
+                            selectedColor: StudioTheme.ink,
                             selectedTileColor: StudioTheme.selected,
                             selected: destination == route,
                             onTap: () {
@@ -169,7 +175,7 @@ class _Sidebar extends StatelessWidget {
               size: 20,
             ),
             selectedLabelTextStyle: const TextStyle(
-              color: StudioTheme.primary,
+              color: StudioTheme.ink,
               fontWeight: FontWeight.w500,
               fontSize: 14,
             ),

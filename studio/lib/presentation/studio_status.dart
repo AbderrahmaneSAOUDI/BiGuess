@@ -37,15 +37,7 @@ class StudioStatus extends StatelessWidget {
                 child: CircularProgressIndicator(semanticsLabel: 'Loading'),
               )
             else
-              StudioIcon(
-                switch (kind) {
-                  StudioStatusKind.offline => StudioIconAsset.offline,
-                  StudioStatusKind.error => StudioIconAsset.error,
-                  _ => icon,
-                },
-                size: 24,
-                color: StudioTheme.muted,
-              ),
+              _StatusSymbol(kind: kind, icon: icon),
             const SizedBox(height: 20),
             Semantics(
               header: true,
@@ -65,4 +57,38 @@ class StudioStatus extends StatelessWidget {
       ),
     ),
   );
+}
+
+class _StatusSymbol extends StatelessWidget {
+  const _StatusSymbol({required this.kind, required this.icon});
+
+  final StudioStatusKind kind;
+  final StudioIconAsset icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final symbol = StudioIcon(
+      switch (kind) {
+        StudioStatusKind.offline => StudioIconAsset.offline,
+        StudioStatusKind.error => StudioIconAsset.error,
+        _ => icon,
+      },
+      size: 24,
+      color: switch (kind) {
+        StudioStatusKind.offline => colors.onTertiary,
+        StudioStatusKind.error => colors.error,
+        _ => StudioTheme.muted,
+      },
+    );
+    if (kind != StudioStatusKind.offline) return symbol;
+    return Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: colors.tertiary,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: symbol,
+    );
+  }
 }

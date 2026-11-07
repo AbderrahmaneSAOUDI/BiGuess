@@ -26,9 +26,10 @@ A first visit still needs the static files; offline installation is not promised
 
 The Studio logo and favicon are unchanged copies of `../assets/logos/biguess_logo.webp`.
 The independent app registers the brand logo and nine local SVG icons; it does not
-import Mobile assets at runtime. The UI uses neutral surfaces and a darker,
-readable blue accent derived from the logo, with the full color palette retained
-in the logo itself. No decorative hero, generated illustration or promotional
+import Mobile assets at runtime. The UI uses neutral surfaces and the exact `BiGuessColors` palette in
+`lib/app/studio_brand_colors.dart`: red `#EA4335`, blue `#4285F4`, green `#34A853`,
+yellow `#F9AB00`, outline `#1A1919`. Blue is the primary accent; selected labels
+stay dark for readability. Red, green and yellow have semantic theme roles. No decorative hero, generated illustration or promotional
 copy is included.
 
 The supplied SVGs are optimized in `../assets/icons/`. Studio bundles only the
