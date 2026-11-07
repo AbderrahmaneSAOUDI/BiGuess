@@ -25,34 +25,26 @@ class StudioStatus extends StatelessWidget {
     liveRegion: kind != StudioStatusKind.empty,
     child: Card.outlined(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 48),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF0F5EF),
-                borderRadius: BorderRadius.circular(18),
+            if (kind == StudioStatusKind.loading)
+              const SizedBox.square(
+                dimension: 24,
+                child: CircularProgressIndicator(semanticsLabel: 'Loading'),
+              )
+            else
+              Icon(
+                switch (kind) {
+                  StudioStatusKind.offline => Icons.cloud_off_outlined,
+                  StudioStatusKind.error => Icons.error_outline,
+                  _ => icon,
+                },
+                size: 24,
+                color: StudioTheme.muted,
               ),
-              child: kind == StudioStatusKind.loading
-                  ? const SizedBox.square(
-                      dimension: 28,
-                      child: CircularProgressIndicator(
-                        semanticsLabel: 'Loading',
-                      ),
-                    )
-                  : Icon(
-                      switch (kind) {
-                        StudioStatusKind.offline => Icons.cloud_off_outlined,
-                        StudioStatusKind.error => Icons.error_outline,
-                        _ => icon,
-                      },
-                      size: 28,
-                      color: const Color(0xFF42634E),
-                    ),
-            ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 20),
             Semantics(
               header: true,
               child: Text(
@@ -61,19 +53,11 @@ class StudioStatus extends StatelessWidget {
                 style: Theme.of(context).textTheme.titleLarge,
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 460),
+              constraints: const BoxConstraints(maxWidth: 440),
               child: Text(message, textAlign: TextAlign.center),
             ),
-            if (kind == StudioStatusKind.empty) ...[
-              const SizedBox(height: 20),
-              const Text(
-                'A little more time. A lot to look forward to.',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 12, color: StudioTheme.muted),
-              ),
-            ],
           ],
         ),
       ),

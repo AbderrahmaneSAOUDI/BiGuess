@@ -53,3 +53,15 @@ at 800×600, 1024×768 and 1440×900. Release Chrome smoke tests retain desktop
 pointer/keyboard, mobile touch, history, refresh, offline and public-boundary
 checks, and also capture the dashboard for visual review. Root Mobile's 249
 tests, analysis, setup validation and 158 tooling tests pass independently.
+
+
+## Logo-based minimal UI
+
+The green visual refresh above is historical. The current Studio uses the supplied
+BiGuess logo and favicon, neutral surfaces, a restrained blue accent, simple
+navigation and a single empty-state panel per route. Promotional copy, repeated
+preview badges and the decorative card illustration have been removed.
+The app bundles only the approved logo as media; the public-boundary check now
+allows that exact asset instead of rejecting all application media. Icon requests
+and delivery specifications are in `assets/icons/README.md`; Material icons remain
+in use pending delivery. The current verification gates still apply.

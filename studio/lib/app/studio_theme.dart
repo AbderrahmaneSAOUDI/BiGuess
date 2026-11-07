@@ -2,19 +2,27 @@ import 'package:flutter/material.dart';
 
 abstract final class StudioTheme {
   static const wideBreakpoint = 800.0;
-  static const ink = Color(0xFF192D29);
-  static const muted = Color(0xFF5C6E66);
-  static const canvas = Color(0xFFF7F8F4);
-  static const sidebar = Color(0xFF142D28);
-  static const mint = Color(0xFFC5EBD6);
-  static const line = Color(0xFFDEE5DF);
+  // Logo colors. Keep the multicolor identity in the logo, with a blue UI accent.
+  static const blue = Color(0xFF68B8F8);
+  static const green = Color(0xFF38A858);
+  static const coral = Color(0xFFE84838);
+  static const yellow = Color(0xFFF8E8A8);
+  static const primary = Color(0xFF175D93);
+  static const ink = Color(0xFF27272A);
+  static const muted = Color(0xFF626268);
+  static const canvas = Color(0xFFFFFFFF);
+  static const sidebar = Color(0xFFFAFAFA);
+  static const selected = Color(0xFFECF5FD);
+  static const line = Color(0xFFE7E7EA);
 
   static ThemeData get light {
     final base = ThemeData(
       useMaterial3: true,
       colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xFF24664D),
+        seedColor: blue,
+        primary: primary,
         surface: Colors.white,
+        onSurface: ink,
       ),
     );
     return base.copyWith(
@@ -24,40 +32,36 @@ abstract final class StudioTheme {
           .apply(bodyColor: ink, displayColor: ink)
           .copyWith(
             headlineLarge: const TextStyle(
-              fontSize: 34,
-              fontWeight: FontWeight.w700,
-              letterSpacing: -1.2,
+              fontSize: 28,
+              fontWeight: FontWeight.w600,
+              letterSpacing: -0.5,
               color: ink,
             ),
             titleLarge: const TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.w600,
-              letterSpacing: -0.4,
+              fontSize: 18,
+              fontWeight: FontWeight.w500,
               color: ink,
             ),
             bodyMedium: const TextStyle(
               fontSize: 14,
-              height: 1.6,
+              height: 1.5,
               color: muted,
             ),
-            bodyLarge: const TextStyle(fontSize: 16, height: 1.6, color: muted),
           ),
       appBarTheme: const AppBarTheme(
         backgroundColor: canvas,
         foregroundColor: ink,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
-        toolbarHeight: 76,
+        toolbarHeight: 68,
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
           foregroundColor: ink,
           minimumSize: const Size(48, 44),
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           side: const BorderSide(color: line),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
         ),
       ),
       cardTheme: CardThemeData(
@@ -66,7 +70,7 @@ abstract final class StudioTheme {
         elevation: 0,
         margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(24),
+          borderRadius: BorderRadius.circular(8),
           side: const BorderSide(color: line),
         ),
       ),

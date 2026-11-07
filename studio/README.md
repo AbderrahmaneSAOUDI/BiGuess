@@ -22,6 +22,20 @@ CanvasKit locally (`--no-web-resources-cdn`) and disables service workers.
 After the static app resources load, all preview navigation works offline.
 A first visit still needs the static files; offline installation is not promised.
 
+## Brand and icons
+
+The Studio logo and favicon are unchanged copies of `../assets/logos/biguess_logo.webp`.
+The independent app registers only `assets/brand/biguess_logo.webp`; it does not
+import Mobile assets at runtime. The UI uses neutral surfaces and a darker,
+readable blue accent derived from the logo, with the full color palette retained
+in the logo itself. No decorative hero, generated illustration or promotional
+copy is included.
+
+Place the nine requested outline WebP icons in **`studio/assets/icons/`**.
+The [icon checklist](assets/icons/README.md) specifies filenames and sizes.
+Until supplied and reviewed, the UI uses its existing Material icons. The icon
+folder is not bundled yet.
+
 ## Boundaries
 
 - `lib/app/`: application composition, URL routing, responsive theme tokens.

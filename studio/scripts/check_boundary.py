@@ -22,6 +22,8 @@ worker = build / 'flutter_service_worker.js'
 # Flutter 3.47 emits a zero-byte placeholder with --pwa-strategy=none.
 assert not worker.exists() or worker.stat().st_size == 0, 'No active service worker allowed'
 assert 'serviceWorkerSettings' not in (root / 'web/flutter_bootstrap.js').read_text()
-# Reject Mobile content accidentally registered as browser assets.
-assert not (build / 'assets/assets').exists(), 'Unexpected bundled content'
-print('Studio boundary checks passed: SDK-only, no native platforms, no content assets or service worker.')
+# Only the explicitly approved brand logo may be bundled as application media.
+media = build / 'assets/assets'
+media_files = {p.relative_to(media).as_posix() for p in media.rglob('*') if p.is_file()}
+assert media_files == {'brand/biguess_logo.webp'}, ('Unexpected bundled content', media_files)
+print('Studio boundary checks passed: SDK-only, no native platforms, brand logo only, no content assets or active service worker.')
