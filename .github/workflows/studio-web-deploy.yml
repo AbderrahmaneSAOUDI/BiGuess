@@ -1,0 +1,109 @@
+name: Studio Web
+on:
+  push:
+    branches: [main]
+    paths: ['studio/**', '.github/workflows/studio-web-deploy.yml']
+  pull_request:
+    paths: ['studio/**', '.github/workflows/studio-web-deploy.yml']
+  workflow_dispatch:
+    inputs:
+      failure_probe:
+        description: 'Intentionally fail a test to verify deployment is blocked'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: studio-web-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: studio
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.9'
+          channel: stable
+          cache: true
+      - name: Inject intentional failing test for the requested negative control
+        if: github.event_name == 'workflow_dispatch' && inputs.failure_probe
+        run: |
+          cat > test/deployment_failure_probe_test.dart <<'DART'
+          import 'package:flutter_test/flutter_test.dart';
+          void main() { test('T26A deployment negative control', () => expect(true, isFalse)); }
+          DART
+          dart format test/deployment_failure_probe_test.dart
+      - name: Studio quality gates and release build
+        run: bash scripts/check.sh all
+      - name: Static deployment packaging tests
+        run: python3 -m unittest discover -s test -p 'test_*.py' -v
+      - name: Package commit-versioned static assets
+        run: python3 scripts/prepare_deployment.py --commit "$GITHUB_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install isolated browser test tooling
+        run: |
+          npm install --prefix "$RUNNER_TEMP/studio-browser" --no-save --package-lock=false playwright@1.65.0
+          "$RUNNER_TEMP/studio-browser/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Verify the actual deployment artifact in desktop and mobile browsers
+        run: NODE_PATH="$RUNNER_TEMP/studio-browser/node_modules" STUDIO_WEB_ROOT=build/pages node scripts/browser_smoke.cjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: studio-web-${{ github.sha }}
+          path: studio/build/pages
+          if-no-files-found: error
+          retention-days: 7
+  deploy:
+    needs: verify
+    if: github.repository == 'AbderrahmaneSAOUDI/BiGuess' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: studio-production
+      url: https://studio.saoudi.online
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: studio-web-${{ github.sha }}
+          path: public
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install pinned Pages uploader without credentials
+        run: npm install --prefix "$RUNNER_TEMP/studio-deploy" --no-save --package-lock=false wrangler@4.157.0
+      - name: Check that this is still the current main commit
+        id: current
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          current_sha=$(gh api repos/AbderrahmaneSAOUDI/BiGuess/git/ref/heads/main --jq .object.sha)
+          if [ "$current_sha" = "$GITHUB_SHA" ]; then
+            echo 'deploy=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'deploy=false' >> "$GITHUB_OUTPUT"
+            echo 'Skipping superseded commit.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload verified static assets to Cloudflare Pages
+        if: steps.current.outputs.deploy == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo 'Missing studio-production CLOUDFLARE_API_TOKEN secret.' >&2; exit 1; }
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo 'Missing studio-production CLOUDFLARE_ACCOUNT_ID secret.' >&2; exit 1; }
+          "$RUNNER_TEMP/studio-deploy/node_modules/.bin/wrangler" pages deploy public --project-name=biguess-studio --branch=main --commit-hash="$GITHUB_SHA"
+          echo "Published Studio commit $GITHUB_SHA to https://studio.saoudi.online" >> "$GITHUB_STEP_SUMMARY"

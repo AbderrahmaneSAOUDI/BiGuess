@@ -18,7 +18,7 @@ bash scripts/check.sh all
 Individual gates: `bash scripts/check.sh format|analyze|test|build` (choose one).
 Format fixes: `dart format lib test`. Release output: `studio/build/web`.
 No Android platform, APK or installation package is created. The build bundles
-CanvasKit locally (`--no-web-resources-cdn`) and disables service workers.
+CanvasKit and fallback fonts locally (`--no-web-resources-cdn`) and disables service workers.
 After the static app resources load, all preview navigation works offline.
 A first visit still needs the static files; offline installation is not promised.
 
@@ -61,15 +61,16 @@ server does this. Wide screens use a rail, narrow screens a labelled drawer;
 Material controls support Tab/Enter, pointer and touch. Content scrolls at large
 text sizes. Routes provide no authorization and all are safe for public visitors.
 
-## Immediate next target: T26A
+## Static deployment: T26A
 
-**`https://studio.saoudi.online` is the immediate next deployment target in T26A.**
-T26 does not configure DNS, Cloudflare Pages, hosting, secrets or a deploy workflow.
-The scoped `studio-web-checks.yml` only validates; it cannot publish. T26A must add
-owner-authorized Pages/DNS/TLS and main-only deployment after passing Studio gates,
-verify SPA deep links and refresh, set appropriate cache/security headers and
-prove rollback. The initial deployment must serve only this inert public preview.
-Backend Workers/D1/R2 remain local and undeployed; authentication follows in T27.
+The immediate target is **`https://studio.saoudi.online`**, using the
+`biguess-studio` Cloudflare Pages Direct Upload project. The
+`studio-web-deploy.yml` workflow validates pull requests and deploys only a
+successful current `main` build through the `studio-production` environment.
+See [deployment setup, status, evidence and rollback](DEPLOYMENT.md).
+T26A remains in progress until custom-domain, CI-token and live validation gates
+are satisfied. Only the `studio` DNS record is in scope; the apex domain and
+other records are unchanged. Workers/D1/R2 remain local and undeployed.
 
 ## Verification
 
@@ -90,5 +91,5 @@ NODE_PATH=/tmp/biguess-studio-browser/node_modules node scripts/browser_smoke.cj
 
 Set `CHROME_EXECUTABLE` to use an existing Chrome executable instead.
 Root Mobile checks and the release browser results are recorded in
-`VERIFICATION.md`. Studio CI runs only on Studio or its own workflow changes.
+`VERIFICATION.md`. Studio CI/deployment runs only on Studio or its own workflow changes.
 Root analysis excludes this separate package and continues checking Mobile.

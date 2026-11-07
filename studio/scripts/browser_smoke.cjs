@@ -4,7 +4,18 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
-const root = path.resolve(__dirname, '../build/web');
+const root = process.env.STUDIO_WEB_ROOT ? path.resolve(process.env.STUDIO_WEB_ROOT) : path.resolve(__dirname, '../build/web');
+const headerFile = path.join(root, '_headers');
+const headerRules = [];
+if (fs.existsSync(headerFile)) {
+  for (const line of fs.readFileSync(headerFile, 'utf8').split('\n')) {
+    if (line.startsWith('/')) headerRules.push({pattern: line.trim(), headers: {}});
+    else if (line.startsWith('  ') && headerRules.length) {
+      const colon = line.indexOf(':');
+      if (colon > 0) headerRules.at(-1).headers[line.slice(0, colon).trim()] = line.slice(colon + 1).trim();
+    }
+  }
+}
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'application/json', '.wasm': 'application/wasm', '.ttf': 'font/ttf', '.otf': 'font/otf', '.png': 'image/png', '.webp': 'image/webp', '.svg': 'image/svg+xml' };
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
@@ -14,13 +25,18 @@ const server = http.createServer((req, res) => {
   }
   const target = fs.existsSync(file) && fs.statSync(file).isFile()
     ? file : path.join(root, 'index.html');
+  for (const rule of headerRules) {
+    if (rule.pattern.endsWith('*') ? url.pathname.startsWith(rule.pattern.slice(0, -1)) : url.pathname === rule.pattern) {
+      for (const [name, value] of Object.entries(rule.headers)) res.setHeader(name, value);
+    }
+  }
   res.setHeader('Content-Type', types[path.extname(target)] || 'application/octet-stream');
   fs.createReadStream(target).pipe(res);
 });
 
 (async () => {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const origin = `http://127.0.0.1:${server.address().port}`;
+  const origin = process.env.STUDIO_ORIGIN || `http://127.0.0.1:${server.address().port}`;
   const browser = await chromium.launch({
     ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}),
     args: ['--no-sandbox'],
@@ -32,6 +48,7 @@ const server = http.createServer((req, res) => {
         isMobile: mobile, hasTouch: mobile,
       });
       const errors = [];
+      let offline = false;
       const external = [];
       await context.route('**/*', route => {
         if (!route.request().url().startsWith(origin + '/')) {
@@ -42,10 +59,26 @@ const server = http.createServer((req, res) => {
       });
       const page = await context.newPage();
       page.on('pageerror', error => errors.push(String(error)));
-      await page.goto(origin + '/dashboard');
+      page.on('requestfailed', request => {
+        // Chrome retries/aborts bookmark images during URL changes; verify the favicon separately.
+        if (!request.url().endsWith('/favicon.webp')) errors.push('Failed request: ' + request.url());
+      });
+      page.on('console', message => {
+        if (message.type() === 'error' && !(offline && message.text().includes('ERR_INTERNET_DISCONNECTED'))) errors.push(message.text());
+      });
+      const response = await page.goto(origin + '/dashboard');
+      if (headerRules.length || process.env.STUDIO_ORIGIN) {
+        assert.equal(response.headers()['x-content-type-options'], 'nosniff');
+        assert(response.headers()['content-security-policy'].includes("connect-src 'self'"));
+      }
       await page.locator('flt-semantics-placeholder').evaluate(element => element.click());
       await page.getByRole('heading', { name: /^Studio under construction/ }).waitFor();
       await page.screenshot({ path: `/tmp/studio-design-dashboard-${mobile ? 'mobile' : 'desktop'}.png` });
+      const faviconUrl = new URL(await page.locator('link[rel=icon]').getAttribute('href'), origin).href;
+      assert(faviconUrl.startsWith(origin + '/'));
+      const faviconResponse = await context.request.get(faviconUrl);
+      assert.equal(faviconResponse.status(), 200);
+      assert(faviconResponse.headers()['content-type'].includes('image/webp'));
       const navigate = async (label, expected) => {
         if (mobile) await page.getByRole('button', { name: 'Open navigation menu' }).tap();
         const control = page.getByRole('button', { name: new RegExp('^' + label + '(?:\\s|$)') });
@@ -67,6 +100,8 @@ const server = http.createServer((req, res) => {
       await navigate('Profile', '/profile');
       await page.getByRole('button', { name: 'Sign in', exact: true }).click();
       await page.getByRole('heading', { name: /^Sign-in is not available yet/ }).waitFor();
+      await page.waitForLoadState('networkidle');
+      offline = true;
       await context.setOffline(true);
       await navigate('Dashboard', '/dashboard');
       await navigate('Cards', '/cards');

@@ -1,10 +1,12 @@
 {{flutter_js}}
 {{flutter_build_config}}
 
+const studioConfig = {fontFallbackBaseUrl: '/font-fallbacks/'};
 _flutter.loader.load({
+  config: studioConfig,
   onEntrypointLoaded: async function(engineInitializer) {
     try {
-      const appRunner = await engineInitializer.initializeEngine();
+      const appRunner = await engineInitializer.initializeEngine(studioConfig);
       await appRunner.runApp();
       document.getElementById('startup')?.remove();
     } catch (_) {
