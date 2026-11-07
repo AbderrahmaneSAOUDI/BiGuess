@@ -1,0 +1,39 @@
+name: Studio Web checks
+on:
+  push:
+    branches: [main]
+    paths: ['studio/**', '.github/workflows/studio-web-checks.yml']
+  pull_request:
+    paths: ['studio/**', '.github/workflows/studio-web-checks.yml']
+permissions:
+  contents: read
+concurrency:
+  group: studio-checks-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  studio:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: studio
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.9'
+          channel: stable
+          cache: true
+      - run: bash scripts/check.sh all
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install isolated browser test tooling
+        run: |
+          npm install --prefix "$RUNNER_TEMP/studio-browser" --no-save --package-lock=false playwright@1.65.0
+          "$RUNNER_TEMP/studio-browser/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Release browser smoke test
+        run: NODE_PATH="$RUNNER_TEMP/studio-browser/node_modules" node scripts/browser_smoke.cjs
