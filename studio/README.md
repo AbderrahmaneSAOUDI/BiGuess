@@ -59,6 +59,7 @@ Backend Workers/D1/R2 remain local and undeployed; authentication follows in T27
 
 Widget tests cover all destinations, compact touch navigation, 200% text,
 keyboard navigation, accessible status messages, URL parsing and route updates.
+Enlarged text also exercises tablet/desktop navigation at the responsive boundary.
 The CI also runs `node scripts/browser_smoke.cjs` against the release build in
 headless Chromium, checking desktop pointer/keyboard and mobile touch navigation,
 browser back/forward, direct-route refresh, loaded-app offline operation, no

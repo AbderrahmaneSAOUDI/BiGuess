@@ -39,3 +39,17 @@ at `https://studio.saoudi.online`. No DNS, hosting, deploy workflow, backend
 publishing, authentication integration or Studio Android artifact was introduced.
 Existing edits to `TODO.md`, editor settings and historical-source deletions were
 outside this task's scope and were preserved.
+
+## Studio visual refresh
+
+The preview now uses an ivory workspace, a dark green navigation sidebar,
+consistent emerald accents, rounded status surfaces and a decorative card deck.
+The illustration is drawn with Flutter widgets; there are no new assets,
+packages, network calls or content-management actions. The sidebar adapts to
+available space and text scaling; smaller layouts use the scrolling drawer.
+
+The refreshed Studio suite contains **7 tests**, including new 200% text checks
+at 800×600, 1024×768 and 1440×900. Release Chrome smoke tests retain desktop
+pointer/keyboard, mobile touch, history, refresh, offline and public-boundary
+checks, and also capture the dashboard for visual review. Root Mobile's 249
+tests, analysis, setup validation and 158 tooling tests pass independently.

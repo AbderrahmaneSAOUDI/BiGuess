@@ -45,6 +45,7 @@ const server = http.createServer((req, res) => {
       await page.goto(origin + '/dashboard');
       await page.locator('flt-semantics-placeholder').evaluate(element => element.click());
       await page.getByRole('heading', { name: /^Studio under construction/ }).waitFor();
+      await page.screenshot({ path: `/tmp/studio-design-dashboard-${mobile ? 'mobile' : 'desktop'}.png` });
       const navigate = async (label, expected) => {
         if (mobile) await page.getByRole('button', { name: 'Open navigation menu' }).tap();
         const control = page.getByRole('button', { name: new RegExp('^' + label + '(?:\\s|$)') });

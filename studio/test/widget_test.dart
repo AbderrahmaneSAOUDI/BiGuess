@@ -50,6 +50,26 @@ void main() {
     }
   });
 
+  testWidgets('large text adapts tablet and desktop navigation', (
+    tester,
+  ) async {
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    for (final size in [
+      const Size(800, 600),
+      const Size(1024, 768),
+      const Size(1440, 900),
+    ]) {
+      await open(tester, size);
+      tester.platformDispatcher.textScaleFactorTestValue = 2;
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull, reason: 'viewport $size');
+      expect(find.byType(NavigationRail), findsNothing);
+      expect(find.byTooltip('Open navigation menu'), findsOneWidget);
+      tester.platformDispatcher.clearTextScaleFactorTestValue();
+      await tester.pumpAndSettle();
+    }
+  });
+
   testWidgets('keyboard can focus and activate navigation', (tester) async {
     await open(tester, const Size(1024, 768));
     for (var i = 0; i < 12; i++) {
