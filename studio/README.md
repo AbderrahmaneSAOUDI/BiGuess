@@ -68,8 +68,8 @@ The immediate target is **`https://studio.saoudi.online`**, using the
 `studio-web-deploy.yml` workflow validates pull requests and deploys only a
 successful current `main` build through the `studio-production` environment.
 See [deployment setup, status, evidence and rollback](DEPLOYMENT.md).
-T26A remains in progress until custom-domain, CI-token and live validation gates
-are satisfied. Only the `studio` DNS record is in scope; the apex domain and
+T26A is complete: DNS/TLS, encrypted CI credentials, live browser checks,
+push-to-live, failure/branch guards and rollback/restore are verified. Only the `studio` DNS record is in scope; the apex domain and
 other records are unchanged. Workers/D1/R2 remain local and undeployed.
 
 ## Verification

@@ -1,8 +1,10 @@
 # Studio static deployment — T26A
 
-Status: **live; final acceptance checks in progress**. Custom-domain DNS/TLS and
-the encrypted upload token are configured. The first GitHub deployment and live
-browser checks pass. The second-push and rollback evidence is being completed.
+Status: **T26A complete**. The static Studio preview is live at
+**https://studio.saoudi.online**, with automatic deployment after passing
+Studio-related pushes to `main`. DNS/TLS, encrypted credentials, live browser
+checks, push-to-live updates, failure/branch guards, rollback and restore have
+all been verified. Backend deployment and authentication remain separate work.
 
 ## Exact target and boundary
 
@@ -130,10 +132,10 @@ After successful GitHub upload:
 - [x] Dedicated environment token configured (account ID already set).
 - [x] Successful GitHub run URL, source SHA and production deployment URL recorded.
 - [x] Live browser/deep-link/header checks passed.
-- [ ] Harmless second `main` push visibly updated the site.
+- [x] Harmless second `main` push visibly updated the site.
 - [x] Intentional failing-test run skipped deployment and retained prior commit.
 - [x] Branch/PR production restrictions verified.
-- [ ] Rollback and restore verified with deployment IDs.
+- [x] Rollback and restore verified with deployment IDs.
 
 ## Primary references
 
@@ -179,3 +181,31 @@ proof that the custom domain or automatic upload is already live.
   nameserver was changed. Only `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`
   are stored as encrypted production environment secrets; the token is absent
   from ordinary repository/environment variables and browser artifacts.
+
+
+## Push-to-live and rollback completion evidence
+
+- [Second successful normal push](https://github.com/AbderrahmaneSAOUDI/BiGuess/actions/runs/42417130409):
+  source `c380f58216c2650f4faec4fa237cbffc7e5eea28`, production deployment
+  `ed0e02d8-f4aa-49f6-b13d-42b34fd92a7a`,
+  `https://ed0e02d8.biguess-studio.pages.dev`.
+- The harmless dashboard copy changed from “This public preview…” to
+  “This Studio preview…”. The normal push automatically built, validated and
+  published it without manual upload. Live desktop and mobile Chrome checks
+  explicitly asserted the new visible copy, then verified history, refresh,
+  keyboard/touch, offline operation, headers and absence of private storage or
+  external requests. `/release.json` reported the new full source SHA.
+- Rollback was actually performed to production deployment
+  `6958e587-fe33-4dd0-a908-2f5d3193e2fb`; live metadata reverted to `8dbcdd5…`.
+  `/dashboard`, `/topics`, `/my-packs` and the old versioned JavaScript served
+  successfully. Production was then restored to
+  `ed0e02d8-f4aa-49f6-b13d-42b34fd92a7a`; metadata, routes and JavaScript were
+  verified again for `c380f58…`. No DNS record was changed during rollback.
+- The temporary non-main probe branch was deleted after confirming its expected
+  source SHA; the historical run remains available as evidence.
+- Final local gates: 249 Mobile tests, 8 Studio tests, 5 packaging tests,
+  158 tooling tests, analysis, setup validation and release build pass.
+- These IDs identify the two releases used for acceptance/rollback verification.
+  Subsequent validated documentation/UI pushes continue deploying automatically;
+  the current source SHA is always available at
+  `https://studio.saoudi.online/release.json` and in GitHub's deployment summary.

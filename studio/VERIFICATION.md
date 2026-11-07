@@ -86,3 +86,14 @@ Icon integration verification: all eight Studio tests, Studio analysis and relea
 web build pass. Desktop/mobile Chrome smoke checks pass with local SVG assets,
 zero external requests and offline navigation. Root Mobile's 249 tests and
 158 tooling tests pass; source/asset comparisons and script syntax checks pass.
+
+
+## T26A live deployment
+
+The static frontend is live at `https://studio.saoudi.online`. Normal GitHub
+push-to-deploy, the visible second-push update, custom-domain TLS, live
+browser/deep-link/cache/security checks, a failing-test deployment block,
+a non-main deployment block, and rollback/restore are verified. See
+[deployment evidence and operational steps](DEPLOYMENT.md) for run URLs,
+commit SHAs and production deployment IDs. No backend or Firebase integration
+is deployed. Only the owner-controlled `studio` CNAME was changed.
