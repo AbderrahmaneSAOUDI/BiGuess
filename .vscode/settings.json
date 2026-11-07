@@ -18,6 +18,11 @@
     "chatgpt_readme.md": true,
     "CHATGPT_CHAT.md": true,
     "pubspec.lock": true,
-    "shorebird.yaml": true
+    "shorebird.yaml": true,
+    ".github": true,
+    ".codex": true,
+    "GEMINI.md": true,
+    "README.md": true,
+    "android": true
   }
 }
