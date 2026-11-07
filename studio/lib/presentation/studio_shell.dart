@@ -228,7 +228,7 @@ class _PlaceholderPage extends StatelessWidget {
           StudioRoute.notFound =>
             'Choose a page from the Studio navigation to continue.',
           StudioRoute.dashboard =>
-            'This public preview contains no content or account data.',
+            'This Studio preview contains no content or account data.',
           StudioRoute.profile => 'No profile is connected.',
           _ => 'No content is available in this preview.',
         },

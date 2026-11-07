@@ -1,8 +1,8 @@
 # Studio static deployment — T26A
 
-Status: **in progress**. Pages project and GitHub environment are provisioned;
-custom-domain DNS and the dedicated upload token require owner setup. Do not
-mark T26A complete until the live and push-to-live evidence below is recorded.
+Status: **live; final acceptance checks in progress**. Custom-domain DNS/TLS and
+the encrypted upload token are configured. The first GitHub deployment and live
+browser checks pass. The second-push and rollback evidence is being completed.
 
 ## Exact target and boundary
 
@@ -126,13 +126,13 @@ After successful GitHub upload:
 
 ## Evidence to complete before marking T26A done
 
-- [ ] Custom-domain DNS and Cloudflare certificate active.
-- [ ] Dedicated environment token configured (account ID already set).
-- [ ] Successful GitHub run URL, source SHA and production deployment URL recorded.
-- [ ] Live browser/deep-link/header checks passed.
+- [x] Custom-domain DNS and Cloudflare certificate active.
+- [x] Dedicated environment token configured (account ID already set).
+- [x] Successful GitHub run URL, source SHA and production deployment URL recorded.
+- [x] Live browser/deep-link/header checks passed.
 - [ ] Harmless second `main` push visibly updated the site.
-- [ ] Intentional failing-test run skipped deployment and retained prior commit.
-- [ ] Branch/PR production restrictions verified.
+- [x] Intentional failing-test run skipped deployment and retained prior commit.
+- [x] Branch/PR production restrictions verified.
 - [ ] Rollback and restore verified with deployment IDs.
 
 ## Primary references
@@ -151,3 +151,31 @@ smoke test pass. Root Mobile's 249 tests and analysis pass; setup validation
 and deletion; normal owner pushes remain allowed. The environment independently
 restricts production deployment to `main`. These are local/setup results, not
 proof that the custom domain or automatic upload is already live.
+
+
+## Live evidence — 2026-11-07
+
+- Initial production SHA: `8dbcdd59b69767f8f844fc9e8fe53fd0e1a8c8ec`.
+- [Successful GitHub production run](https://github.com/AbderrahmaneSAOUDI/BiGuess/actions/runs/42410573811) (retry after owner installed the environment secret).
+- Initial production deployment: `6958e587-fe33-4dd0-a908-2f5d3193e2fb`,
+  `https://6958e587.biguess-studio.pages.dev`.
+- `https://studio.saoudi.online` returns 200 over validated HTTPS. Cloudflare
+  reports domain status, verification and validation active; HTTPS certificate
+  verification succeeds in curl and Chrome.
+  `/`, `/dashboard`, `/topics`, `/my-packs`, `/cards`, `/profile`, `/login` serve
+  the current SPA. HTML/metadata revalidate; versioned JS is immutable.
+- Live desktop and mobile Chrome smoke checks pass: actual routes, refresh,
+  back/forward, keyboard/touch, self-hosted assets/fonts, offline navigation,
+  zero external requests, no service workers or account storage.
+- [Intentional failing-test probe after publication](https://github.com/AbderrahmaneSAOUDI/BiGuess/actions/runs/42416753486):
+  verification failed as intended, deployment skipped, and the live SHA stayed
+  `8dbcdd59b69767f8f844fc9e8fe53fd0e1a8c8ec`.
+- [Non-main branch dispatch probe](https://github.com/AbderrahmaneSAOUDI/BiGuess/actions/runs/42416796343):
+  validation succeeded, deployment skipped. The temporary branch
+  `studio-t26a-branch-probe-8dbcdd5` is removed after verification. The production
+  job also explicitly excludes pull requests and the environment allows only
+  `main`; feature-branch pushes do not trigger a production workflow.
+- The owner edited only the Namecheap `studio` CNAME. No apex, other record or
+  nameserver was changed. Only `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`
+  are stored as encrypted production environment secrets; the token is absent
+  from ordinary repository/environment variables and browser artifacts.

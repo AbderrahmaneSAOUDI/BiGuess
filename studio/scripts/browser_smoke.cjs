@@ -74,6 +74,10 @@ const server = http.createServer((req, res) => {
       await page.locator('flt-semantics-placeholder').evaluate(element => element.click());
       await page.getByRole('heading', { name: /^Studio under construction/ }).waitFor();
       await page.screenshot({ path: `/tmp/studio-design-dashboard-${mobile ? 'mobile' : 'desktop'}.png` });
+      if (process.env.STUDIO_EXPECTED_DASHBOARD_COPY) {
+        const statusText = await page.getByRole('heading', { name: /^Studio under construction/ }).textContent();
+        assert(statusText.includes(process.env.STUDIO_EXPECTED_DASHBOARD_COPY), 'The expected Studio copy must be visible');
+      }
       const faviconUrl = new URL(await page.locator('link[rel=icon]').getAttribute('href'), origin).href;
       assert(faviconUrl.startsWith(origin + '/'));
       const faviconResponse = await context.request.get(faviconUrl);
