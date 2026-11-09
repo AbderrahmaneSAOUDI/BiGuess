@@ -1,18 +1,22 @@
 import 'package:flutter/material.dart';
 
 import '../presentation/studio_shell.dart';
+import '../auth/studio_session.dart';
+import '../auth/studio_auth_gate.dart';
 import 'studio_route.dart';
 import 'studio_theme.dart';
 
 class StudioApp extends StatefulWidget {
-  const StudioApp({super.key});
+  const StudioApp({super.key, this.session});
+
+  final StudioSession? session;
 
   @override
   State<StudioApp> createState() => _StudioAppState();
 }
 
 class _StudioAppState extends State<StudioApp> {
-  final _router = StudioRouter();
+  late final _router = StudioRouter(session: widget.session);
 
   @override
   void dispose() {
@@ -45,6 +49,8 @@ class StudioRouteParser extends RouteInformationParser<StudioRoute> {
 
 class StudioRouter extends RouterDelegate<StudioRoute>
     with ChangeNotifier, PopNavigatorRouterDelegateMixin<StudioRoute> {
+  StudioRouter({this.session});
+  final StudioSession? session;
   StudioRoute _route = StudioRoute.dashboard;
 
   @override
@@ -70,7 +76,13 @@ class StudioRouter extends RouterDelegate<StudioRoute>
     pages: [
       MaterialPage<void>(
         key: const ValueKey('studio-shell'),
-        child: StudioShell(route: _route, onNavigate: navigate),
+        child: session == null
+            ? StudioShell(route: _route, onNavigate: navigate)
+            : StudioAuthGate(
+                session: session!,
+                route: _route,
+                onNavigate: navigate,
+              ),
       ),
     ],
     onDidRemovePage: (_) {},

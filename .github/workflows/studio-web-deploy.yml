@@ -43,12 +43,31 @@ jobs:
           void main() { test('T26A deployment negative control', () => expect(true, isFalse)); }
           DART
           dart format test/deployment_failure_probe_test.dart
+      - name: Prepare optional public Firebase client configuration
+        env:
+          STUDIO_PUBLIC_CONFIG_JSON: ${{ vars.STUDIO_PUBLIC_CONFIG_JSON }}
+        run: |
+          if [ -n "$STUDIO_PUBLIC_CONFIG_JSON" ]; then
+            python3 - <<'PYCONFIG'
+          import os
+          from pathlib import Path
+          target = Path(os.environ['RUNNER_TEMP']) / 'studio-public-config.json'
+          target.write_text(os.environ['STUDIO_PUBLIC_CONFIG_JSON'])
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write(f'STUDIO_PUBLIC_CONFIG_FILE={target}\n')
+          PYCONFIG
+          fi
       - name: Studio quality gates and release build
         run: bash scripts/check.sh all
       - name: Static deployment packaging tests
         run: python3 -m unittest discover -s test -p 'test_*.py' -v
       - name: Package commit-versioned static assets
-        run: python3 scripts/prepare_deployment.py --commit "$GITHUB_SHA"
+        run: |
+          args=()
+          if [ -n "${STUDIO_PUBLIC_CONFIG_FILE:-}" ]; then
+            args+=("--public-config" "$STUDIO_PUBLIC_CONFIG_FILE")
+          fi
+          python3 scripts/prepare_deployment.py --commit "$GITHUB_SHA" "${args[@]}"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

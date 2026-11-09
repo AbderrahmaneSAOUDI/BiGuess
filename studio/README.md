@@ -1,9 +1,11 @@
-# BiGuess Studio — T26
+# BiGuess Studio
 
 Independent Flutter Web application. The Android Mobile project stays at the
-repository root. This public preview has empty Dashboard, Topics, My Packs,
-Cards and Profile pages and an inert sign-in explanation. It collects no account
-details, makes no API calls and includes no content dataset or credentials.
+repository root. Studio supports Web Google/Firebase sign-in and Worker-derived Owner/Collector
+sessions. Builds without public Firebase configuration retain the inert preview.
+The deployed frontend has Firebase configuration but no Content API URL: signing
+in cannot grant a role or expose private content until the separately gated
+Worker integration is configured. No content dataset or server credentials are bundled.
 
 ## Local development
 
@@ -35,9 +37,8 @@ copy is included.
 The supplied SVGs are optimized in `../assets/icons/`. Studio bundles only the
 nine it currently uses, with local copies under `studio/assets/icons/` and an
 explicit asset list. The [icon map](assets/icons/README.md) lists current uses.
-`flutter_svg` is the only non-SDK direct runtime dependency; it renders local
-assets without API calls or external icon requests. No unused Google, editing,
-settings or publishing actions are introduced by the extra source icons.
+`flutter_svg` renders local assets. Firebase Core/Auth and `http` are the Web
+identity and Worker-session adapters; no Mobile plugins are imported.
 
 ## Boundaries
 
@@ -45,8 +46,9 @@ settings or publishing actions are introduced by the extra source icons.
 - `lib/presentation/`: shell and reusable empty/loading/offline/error states.
   Loading and offline states are presentation components, not fake live status
   indicators; no network probes run. Startup HTML also reports loading/failure.
-- No data/auth layer exists yet. T27 owns Firebase authentication. Later tickets
-  own authorized API adapters, account-isolated storage and publishing.
+- `lib/auth/`: Firebase identity, short-lived Worker role checks and browser
+  session lifecycle. Roles and content are never persisted in browser storage.
+  Later tickets own account-isolated drafts and publishing.
 - Do not import root Mobile UI, providers, gameplay, native plugins or bundled
   character assets. No shared Dart models are needed for empty routes. When
   needed, stable wire contracts live under `../contracts/content/`; share only
@@ -60,7 +62,9 @@ Navigation uses clean paths (`/dashboard`, `/topics`, `/my-packs`, `/cards`,
 server must fall back to `index.html` for deep-link refresh. Flutter's development
 server does this. Wide screens use a rail, narrow screens a labelled drawer;
 Material controls support Tab/Enter, pointer and touch. Content scrolls at large
-text sizes. Routes provide no authorization and all are safe for public visitors.
+text sizes. Browser guards require a current Worker-authorized session. Every privileged
+server request must independently verify Firebase identity, origin and role;
+route guards alone never authorize access.
 
 ## Static deployment: T26A
 
@@ -78,10 +82,13 @@ other records are unchanged. Workers/D1/R2 remain local and undeployed.
 Widget tests cover all destinations, compact touch navigation, 200% text,
 keyboard navigation, accessible status messages, URL parsing and route updates.
 Enlarged text also exercises tablet/desktop navigation at the responsive boundary.
-The CI also runs `node scripts/browser_smoke.cjs` against the release build in
-headless Chromium, checking desktop pointer/keyboard and mobile touch navigation,
-browser back/forward, direct-route refresh, loaded-app offline operation, no
-external requests, and no account storage or service-worker registrations.
+CI also runs `node scripts/browser_smoke.cjs` against the packaged release in
+headless Chromium. Unconfigured builds verify inert navigation, history, offline
+operation and zero external requests or account storage. Configured builds
+verify protected deep links, the real Google popup and cancellation at desktop
+and narrow touch sizes. Both modes reject runtime errors and service workers.
+Auth controller/client tests also run in Chrome with injected identity and HTTP
+adapters; they do not require real privileged accounts.
 To run locally without adding browser tooling to the app dependencies:
 
 ```bash
@@ -94,3 +101,53 @@ Set `CHROME_EXECUTABLE` to use an existing Chrome executable instead.
 Root Mobile checks and the release browser results are recorded in
 `VERIFICATION.md`. Studio CI/deployment runs only on Studio or its own workflow changes.
 Root analysis excludes this separate package and continues checking Mobile.
+
+## Firebase Web configuration (T27)
+
+The existing Firebase project is `gdg-guess-game`, identified by its BiGuess
+Android application (`com.flutter.gdg_guess_game`) and existing Web app
+`1:26367454001:web:4145b31a97c7dcd07c9e10`. Google sign-in is enabled. Authorized
+domains are `studio.saoudi.online`, `localhost`, `127.0.0.1` and the two existing
+Firebase hosting domains. These settings were read back on 2026-11-09.
+
+CI optionally reads the repository variable `STUDIO_PUBLIC_CONFIG_JSON`. It
+accepts only public client fields, validated before the Flutter build:
+
+```json
+{
+  "STUDIO_FIREBASE_API_KEY": "public Firebase Web API key",
+  "STUDIO_FIREBASE_APP_ID": "Firebase Web app ID",
+  "STUDIO_FIREBASE_PROJECT_ID": "gdg-guess-game",
+  "STUDIO_FIREBASE_AUTH_DOMAIN": "gdg-guess-game.firebaseapp.com",
+  "STUDIO_FIREBASE_MESSAGING_SENDER_ID": "26367454001",
+  "STUDIO_API_BASE_URL": ""
+}
+```
+
+Public Firebase client configuration is expected in JavaScript bundles. Never
+supply service-account keys, OAuth client secrets, Worker credentials or R2
+credentials. Unknown JSON keys are rejected. The API URL intentionally remains
+empty in the live frontend: no production Worker, D1 or private content has been
+released. A future approved integration must set an HTTPS API base URL and match
+its precise CORS origin allowlist before any privileged content request.
+
+For a configured local build, save this public JSON outside source and use:
+
+```bash
+STUDIO_PUBLIC_CONFIG_FILE=/absolute/path/studio-public.json bash scripts/check.sh all
+python3 scripts/prepare_deployment.py --commit "$(git rev-parse HEAD)" --public-config /absolute/path/studio-public.json --output build/pages-auth
+```
+
+Packaging receives the same public file and permits only Firebase's SDK loader,
+Auth token endpoints and exact helper origin in CSP; the default unconfigured
+build retains a same-origin policy. Prefer the supported popup flow on this
+Cloudflare Pages site. A redirect flow on browsers blocking third-party storage
+requires one of [Firebase's documented same-origin/helper solutions](https://firebase.google.com/docs/auth/web/redirect-best-practices);
+adding an authorized domain alone does not solve browser storage restrictions.
+See [Flutter federated authentication](https://firebase.google.com/docs/auth/flutter/federated-auth)
+and [Google sign-in configuration](https://firebase.google.com/docs/auth/web/google-signin).
+
+Google authentication alone never grants access. Session restoration, refresh,
+focus/resume checks and denied/error transitions must obtain fresh server roles.
+Logout and account switching discard the previous role immediately. T27 does not
+implement cached private datasets or draft storage.

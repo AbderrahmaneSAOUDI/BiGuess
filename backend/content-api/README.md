@@ -198,6 +198,11 @@ Configure these **server-side** bindings for each environment:
 - `STUDIO_USERS`: a Worker secret containing JSON entries with `uid`, `email`, and
   `role` (`owner_admin` or `collector`). Both Firebase UID and verified email must
   match exactly one entry (email comparison is case-insensitive).
+- `STUDIO_ALLOWED_ORIGINS`: a JSON array of exact browser origins, for example
+  `["https://studio.saoudi.online"]` for an independently approved environment,
+  or `["http://localhost:7357","http://127.0.0.1:7357"]` for local development.
+  Ports are part of origins. HTTPS is required except for explicit loopback
+  development origins; wildcards, paths and suffix matches are forbidden.
 
 For local development use ignored `.dev.vars.local`; for staging use
 `npx wrangler secret put STUDIO_USERS --env staging` and configure the project ID
@@ -214,6 +219,18 @@ tokens remain usable until expiry unless the operator removes the allowlist entr
 `Cache-Control: no-store`. Invalid/missing tokens return 401 with a Bearer challenge;
 non-allowlisted users and denied operations return 403. Public `/content` endpoints
 remain anonymous; Mobile gameplay requires no player account.
+
+Studio's private namespace has its own fail-closed CORS boundary: missing/malformed
+origin configuration or disallowed browser origins produce 403 before token verification or data access. A
+missing `Origin` on non-browser requests still requires normal token authorization.
+Allowed-origin responses, including authentication errors, echo only that origin
+and vary on `Origin`; no cookies/browser credentials are enabled. Preflight permits
+only GET/POST/PATCH/DELETE and Authorization, Content-Type, If-Match,
+If-None-Match, Idempotency-Key headers. No wildcard CORS policy from public catalog
+routes applies to Studio. Preflight permits transport only and never grants a role.
+No deployment, production origin binding, or administrative API activation is
+performed by the frontend-only Pages workflow. Configure and review these bindings
+before separately approving any production backend release.
 
 | Operation | Owner Admin | Collector |
 | --- | --- | --- |

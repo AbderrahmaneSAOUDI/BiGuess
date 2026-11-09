@@ -4,6 +4,8 @@ export interface Env {
   FIREBASE_PROJECT_ID?: string;
   /** Server-only JSON allowlist: [{ uid, email, role }]. */
   STUDIO_USERS?: string;
+  /** Exact browser origins as JSON; missing/malformed configuration denies CORS. */
+  STUDIO_ALLOWED_ORIGINS?: string;
   DB: D1Database;
   CONTENT: R2Bucket;
   /** Operator-pinned keyId -> base64 SPKI. No private key in the Worker. */

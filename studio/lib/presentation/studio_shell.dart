@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app/studio_route.dart';
+import '../auth/studio_session.dart';
 import '../app/studio_icon_asset.dart';
 import '../app/studio_theme.dart';
 import 'studio_brand.dart';
@@ -8,7 +9,18 @@ import 'studio_icon.dart';
 import 'studio_status.dart';
 
 class StudioShell extends StatelessWidget {
-  const StudioShell({super.key, required this.route, required this.onNavigate});
+  const StudioShell({
+    super.key,
+    required this.route,
+    required this.onNavigate,
+    this.principal,
+    this.onLogout,
+    this.onSwitchAccount,
+  });
+
+  final StudioPrincipal? principal;
+  final VoidCallback? onLogout;
+  final VoidCallback? onSwitchAccount;
 
   final StudioRoute route;
   final ValueChanged<StudioRoute> onNavigate;
@@ -25,11 +37,36 @@ class StudioShell extends StatelessWidget {
           constraints.maxHeight >= 600 * textScale;
       final signIn = Padding(
         padding: const EdgeInsets.only(right: 20),
-        child: OutlinedButton.icon(
-          onPressed: () => onNavigate(StudioRoute.login),
-          icon: const StudioIcon(StudioIconAsset.signIn, size: 18),
-          label: const Text('Sign in'),
-        ),
+        child: principal == null
+            ? OutlinedButton.icon(
+                onPressed: () => onNavigate(StudioRoute.login),
+                icon: const StudioIcon(StudioIconAsset.signIn, size: 18),
+                label: const Text('Sign in'),
+              )
+            : PopupMenuButton<String>(
+                tooltip: 'Account',
+                onSelected: (action) {
+                  if (action == 'logout') onLogout?.call();
+                  if (action == 'switch') onSwitchAccount?.call();
+                },
+                itemBuilder: (_) => [
+                  PopupMenuItem(
+                    enabled: false,
+                    child: Text(
+                      principal!.role == 'owner_admin' ? 'Owner' : 'Collector',
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'switch',
+                    child: Text('Switch account'),
+                  ),
+                  const PopupMenuItem(value: 'logout', child: Text('Sign out')),
+                ],
+                child: const Padding(
+                  padding: EdgeInsets.all(12),
+                  child: Text('Account'),
+                ),
+              ),
       );
       return Scaffold(
         appBar: wide

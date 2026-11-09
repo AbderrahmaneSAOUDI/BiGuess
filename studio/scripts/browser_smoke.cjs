@@ -4,6 +4,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
+const authEnabled = process.env.STUDIO_AUTH_ENABLED === '1' || Boolean(process.env.STUDIO_PUBLIC_CONFIG_FILE);
 const root = process.env.STUDIO_WEB_ROOT ? path.resolve(process.env.STUDIO_WEB_ROOT) : path.resolve(__dirname, '../build/web');
 const headerFile = path.join(root, '_headers');
 const headerRules = [];
@@ -50,7 +51,12 @@ const server = http.createServer((req, res) => {
       const errors = [];
       let offline = false;
       const external = [];
+      const privateCalls = [];
+      context.on('request', request => {
+        if (new URL(request.url()).pathname.startsWith('/content/v1/')) privateCalls.push(request.url());
+      });
       await context.route('**/*', route => {
+        if (authEnabled) return route.continue();
         if (!route.request().url().startsWith(origin + '/')) {
           external.push(route.request().url());
           return route.abort();
@@ -72,6 +78,35 @@ const server = http.createServer((req, res) => {
         assert(response.headers()['content-security-policy'].includes("connect-src 'self'"));
       }
       await page.locator('flt-semantics-placeholder').evaluate(element => element.click());
+      if (authEnabled) {
+        await page.getByRole('button', {name: 'Continue with Google', exact: true}).waitFor().catch(async error => {
+          console.error('Auth startup diagnostics:', errors, await page.locator('body').innerText());
+          await page.screenshot({path: '/tmp/t27-auth-startup-failure.png'});
+          throw error;
+        });
+        assert.equal(await page.getByRole('button', {name: 'Topics', exact: true}).count(), 0);
+        for (const routePath of ['/topics', '/cards', '/my-packs', '/profile', '/login']) {
+          await page.goto(origin + routePath);
+          await page.locator('flt-semantics-placeholder').evaluate(element => element.click());
+          await page.getByRole('button', {name: 'Continue with Google', exact: true}).waitFor();
+          assert.equal(await page.getByRole('button', {name: 'Topics', exact: true}).count(), 0);
+        }
+        const popupPromise = page.waitForEvent('popup');
+        await page.getByRole('button', {name: 'Continue with Google', exact: true}).click();
+        const popup = await popupPromise;
+        await popup.waitForURL(url => url.hostname === 'accounts.google.com', {timeout: 30000});
+        console.log('Google popup reached accounts.google.com from ' + origin);
+        await popup.close();
+        await page.getByText('Sign-in was cancelled. Try again when ready.').waitFor({timeout: 30000});
+        assert.equal(await page.getByRole('button', {name: 'Topics', exact: true}).count(), 0);
+        assert.deepEqual(privateCalls, [], 'No private API calls before Worker authorization');
+        await page.screenshot({path: `/tmp/t27-auth-${mobile ? 'mobile' : 'desktop'}.png`});
+        assert.deepEqual(errors.filter(error => !error.includes('popup-closed-by-user')), [], 'No browser runtime errors');
+        assert.equal(await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length), 0);
+        await context.close();
+        console.log(`${mobile ? 'Mobile' : 'Desktop'}: real Firebase popup, cancellation and protected deep links passed`);
+        continue;
+      }
       await page.getByRole('heading', { name: /^Studio under construction/ }).waitFor();
       await page.screenshot({ path: `/tmp/studio-design-dashboard-${mobile ? 'mobile' : 'desktop'}.png` });
       if (process.env.STUDIO_EXPECTED_DASHBOARD_COPY) {

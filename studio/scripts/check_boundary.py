@@ -1,22 +1,25 @@
-"""T26's deliberately narrow public scaffold policy; not a general secret scanner."""
+"""Studio Web dependency and bundled-content policy; not a general secret scanner."""
 from pathlib import Path
 import re
 from xml.etree import ElementTree
 
 root = Path(__file__).resolve().parents[1]
 allowed = {'package:flutter/', 'package:flutter_web_plugins/', 'package:flutter_svg/',
-           'app/', '../app/', '../presentation/', 'studio_', 'presentation/'}
+           'package:firebase_core/', 'package:firebase_auth/', 'package:http/',
+           'dart:async', 'dart:convert', 'app/', '../app/', '../presentation/',
+           '../auth/', 'auth/', 'studio_', 'presentation/'}
 for path in (root / 'lib').rglob('*.dart'):
     source = path.read_text()
     for imported in re.findall(r"(?:import|export) ['\"]([^'\"]+)", source):
         assert any(imported.startswith(prefix) for prefix in allowed), (path, imported)
-    assert not re.search(r'Firebase|https?://|localStorage|indexedDB', source), path
+    assert not re.search(r'localStorage|indexedDB|BEGIN PRIVATE KEY|service_account', source), path
 for platform in ('android', 'ios', 'linux', 'macos', 'windows'):
     assert not (root / platform).exists(), platform
-# Approved direct dependencies: Flutter SDK and the asset-only SVG renderer.
+# Reviewed Web adapters only; no Mobile/native content dependencies.
 pubspec = (root / 'pubspec.yaml').read_text()
 section = pubspec.split('dependencies:\n', 1)[1].split('dev_dependencies:', 1)[0]
-assert re.findall(r'^  ([a-z_]+):', section, re.M) == ['flutter', 'flutter_web_plugins', 'flutter_svg']
+assert set(re.findall(r'^  ([a-z_]+):', section, re.M)) == {
+    'flutter', 'flutter_web_plugins', 'flutter_svg', 'firebase_core', 'firebase_auth', 'http'}
 build = root / 'build/web'
 assert (build / 'main.dart.js').is_file(), 'Build Studio first'
 worker = build / 'flutter_service_worker.js'

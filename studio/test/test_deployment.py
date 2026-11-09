@@ -3,9 +3,11 @@ import importlib.util
 import json
 from pathlib import Path
 import tempfile
+import sys
 import unittest
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/prepare_deployment.py'
+sys.path.insert(0, str(SCRIPT.parent))
 spec = importlib.util.spec_from_file_location('studio_packaging', SCRIPT)
 packaging = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(packaging)
@@ -44,6 +46,36 @@ class PackagingTests(unittest.TestCase):
         self.assertIn('/releases/*\n  Cache-Control: public, max-age=31536000, immutable', headers)
         self.assertIn('/release.json\n  Cache-Control: public, max-age=0, must-revalidate', headers)
         self.assertIn("connect-src 'self'", headers)
+
+
+    def test_auth_csp_is_precise_and_server_secrets_are_rejected(self):
+        config = self.root / 'public.json'
+        config.write_text(json.dumps({
+            'STUDIO_FIREBASE_API_KEY': 'public-client-key',
+            'STUDIO_FIREBASE_APP_ID': 'app',
+            'STUDIO_FIREBASE_PROJECT_ID': 'project',
+            'STUDIO_FIREBASE_AUTH_DOMAIN': 'project.firebaseapp.com',
+            'STUDIO_FIREBASE_MESSAGING_SENDER_ID': '123',
+            'STUDIO_API_BASE_URL': 'https://private-api.example.com',
+        }))
+        packaging.prepare(self.source, self.output, self.commit, config)
+        headers = (self.output / '_headers').read_text()
+        self.assertIn('frame-src https://project.firebaseapp.com;', headers)
+        self.assertIn('https://private-api.example.com', headers)
+        self.assertNotIn('https://*.googleapis.com', headers)
+        script_policy = headers.split('script-src ', 1)[1].split(';', 1)[0]
+        self.assertNotIn("'unsafe-inline'", script_policy)
+        self.assertEqual(script_policy.count("'sha256-"), 4)
+        # CSP hashes are reviewed for the locked FlutterFire import wrappers.
+        lock = (SCRIPT.parents[1] / 'pubspec.lock').read_text()
+        core_web = lock.split('  firebase_core_web:', 1)[1].split('  flutter:', 1)[0]
+        self.assertIn('version: "4.1.0"', core_web)
+        data = json.loads(config.read_text())
+        data['private_key'] = 'must-never-be-compiled'
+        config.write_text(json.dumps(data))
+        with self.assertRaises(ValueError):
+            packaging.prepare(self.source, self.root / 'bad-pages', self.commit, config)
+        self.assertFalse((self.root / 'bad-pages').exists())
 
     def test_invalid_commit_does_not_create_output(self):
         for sha in ('main', '../escape', 'a' * 7, 'x' * 40):

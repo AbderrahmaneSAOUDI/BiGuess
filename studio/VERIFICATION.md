@@ -97,3 +97,30 @@ a non-main deployment block, and rollback/restore are verified. See
 [deployment evidence and operational steps](DEPLOYMENT.md) for run URLs,
 commit SHAs and production deployment IDs. No backend or Firebase integration
 is deployed. Only the owner-controlled `studio` CNAME was changed.
+
+## T27 implementation verification — 2026-11-09
+
+- Root Mobile: all 249 tests and analysis pass, including the offline SQL/private
+  image gameplay gate. Setup validation and all 158 tooling tests pass.
+- Studio: formatting, fatal-info analysis, all 59 widget/unit/client tests,
+  configured release Web build, bundled-content boundary check and all six
+  deployment packaging tests pass. The new tests exercise both server roles,
+  unauthenticated/denied/expired/revoked states, first-login connectivity errors,
+  popup/redirect failures, switching accounts, logout races, late responses and
+  foreground/background clearing. No private content cache is implemented.
+- Content Worker: TypeScript checks and all 55 tests pass. New cases enforce
+  exact live/development origins, restricted preflight, fail-closed configuration,
+  error-response CORS and role revocation using the same still-valid JWT.
+- Firebase Google provider and authorized domains were changed in the existing
+  project and read back; configuration and remaining live acceptance are recorded
+  in [DEPLOYMENT.md](DEPLOYMENT.md#t27-firebase-activation--2026-11-09).
+- The production Content API URL remains empty. No Worker, D1 migration, R2
+  object or private dataset was deployed. Real Owner/Collector access cannot be
+  claimed from fixtures, and human Google authentication on the live origin is
+  still required before marking T27 complete.
+- Chrome executes all 51 focused auth/session/client tests successfully. The
+  packaged release also passes real Firebase popup launch/cancellation and
+  protected-route refresh checks at 1440×900 and 360×740. These tests open Google
+  but never submit account credentials. The browser test caught FlutterFire's
+  blocked import wrapper; the packaging CSP now permits four exact SDK wrapper
+  hashes, preserving the prohibition on arbitrary inline scripts.

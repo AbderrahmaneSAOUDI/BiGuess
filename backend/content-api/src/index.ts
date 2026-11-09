@@ -4,6 +4,7 @@ import { catalog } from './catalog';
 import { download } from './download';
 import { mutate } from './studio-mutations';
 import { sync } from './sync';
+import { studioCors } from './studio-cors';
 
 interface Fixture {
   object_key: string;
@@ -37,27 +38,29 @@ export default {
     const studioPath = path === '/content/v1/studio' || path.startsWith('/content/v1/studio/')
       ? path.replace('/content/v1/studio', '/studio/v1') : path;
     if (studioPath === '/studio' || studioPath.startsWith('/studio/')) {
-      try {
-        const principal = await authenticate(request, env);
-        if (request.method === 'POST' && studioPath === '/studio/v1/batches') {
-          return mutate(request, env, principal);
+      return studioCors(request, env, async () => {
+        try {
+          const principal = await authenticate(request, env);
+          if (request.method === 'POST' && studioPath === '/studio/v1/batches') {
+            return mutate(request, env, principal);
+          }
+          const operation = studioOperation(request.method, studioPath);
+          if (!operation) return studioError(404, 'not_found');
+          authorize(principal, operation.resource, operation.action);
+          if (operation.resource === 'session') return json(principal);
+          if (operation.resource !== 'users' && operation.action !== 'read' && operation.action !== 'publish') {
+            return mutate(request, env, principal, { resource: operation.resource, action: operation.action, path: studioPath });
+          }
+          return studioError(501, 'not_implemented');
+        } catch (error) {
+          if (error instanceof StudioError) {
+            const response = studioError(error.status, error.code);
+            if (error.status === 401) response.headers.set('WWW-Authenticate', 'Bearer');
+            return response;
+          }
+          return studioError(503, 'auth_unavailable');
         }
-        const operation = studioOperation(request.method, studioPath);
-        if (!operation) return studioError(404, 'not_found');
-        authorize(principal, operation.resource, operation.action);
-        if (operation.resource === 'session') return json(principal);
-        if (operation.resource !== 'users' && operation.action !== 'read' && operation.action !== 'publish') {
-          return mutate(request, env, principal, { resource: operation.resource, action: operation.action, path: studioPath });
-        }
-        return studioError(501, 'not_implemented');
-      } catch (error) {
-        if (error instanceof StudioError) {
-          const response = studioError(error.status, error.code);
-          if (error.status === 401) response.headers.set('WWW-Authenticate', 'Bearer');
-          return response;
-        }
-        return studioError(503, 'auth_unavailable');
-      }
+      }, () => studioError(403, 'forbidden'));
     }
     if (path === '/content/v1/sync/revisions' || /^\/content\/v1\/packs\/[^/]+\/delta$/.test(path)) return sync(request, env);
     if (path.startsWith('/content/v1/packs/')) return download(request, env);

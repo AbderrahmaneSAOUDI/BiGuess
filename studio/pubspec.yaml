@@ -12,6 +12,9 @@ dependencies:
   flutter_web_plugins:
     sdk: flutter
   flutter_svg: 2.3.0
+  firebase_core: ^5.1.0
+  firebase_auth: ^7.0.1
+  http: ^1.6.0
 
 dev_dependencies:
   flutter_test:

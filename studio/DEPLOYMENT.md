@@ -4,7 +4,8 @@ Status: **T26A complete**. The static Studio preview is live at
 **https://studio.saoudi.online**, with automatic deployment after passing
 Studio-related pushes to `main`. DNS/TLS, encrypted credentials, live browser
 checks, push-to-live updates, failure/branch guards, rollback and restore have
-all been verified. Backend deployment and authentication remain separate work.
+all been verified. Backend deployment remains independently gated. T27 adds
+Firebase Web identity without deploying or exposing the Content Backend.
 
 ## Exact target and boundary
 
@@ -17,8 +18,9 @@ all been verified. Backend deployment and authentication remain separate work.
 - GitHub environment: `studio-production`, deployment branch policy: `main` only.
 - Flutter 3.47.9 / Dart 3.13.7, Node 22, Wrangler 4.157.0, Playwright 1.65.0.
 - Upload only the validated `studio/build/pages` artifact. No Workers code,
-  D1 migration, R2 object, content publication, auth SDK or backend secret is
-  deployed. The website remains the inert T26 preview.
+  D1 migration, R2 object, content publication or backend secret is deployed.
+  Public Firebase SDK/configuration may be deployed by T27; the Content API URL
+  remains empty until a separate backend approval.
 
 ## Owner setup: change ONLY the studio subdomain
 
@@ -69,12 +71,15 @@ Only `index.html` and `release.json` live at the deployment root. Application
 resources live under `/releases/<full-commit-sha>/` with immutable browser cache
 headers. The root HTML, metadata and app routes revalidate. All fonts, SVGs and
 CanvasKit resources are served from the same origin. The HTML and metadata
-report the exact public source SHA. Service workers and private browser storage
-remain disabled.
+report the exact public source SHA. Service workers remain disabled. Firebase
+identity uses session persistence in configured builds; Studio roles and private
+content are not persisted.
 
 No top-level `404.html` is generated, enabling Pages' documented SPA fallback.
-CSP restricts connections to the same origin, disables framing/objects and
-permits the WebAssembly renderer; camera, microphone and geolocation are off.
+The unconfigured preview CSP restricts connections to the same origin. Configured
+Firebase builds add only approved SDK/Auth/helper endpoints (see T27 below). CSP
+disables framing/objects and permits the WebAssembly renderer; camera, microphone
+and geolocation are off.
 Do not add zone-wide cache rules to the `saoudi.online` apex for this deployment.
 
 ## Local verification
@@ -103,8 +108,10 @@ After successful GitHub upload:
 2. Check `/release.json` matches the deployed workflow commit, root HTML
    revalidates, `/releases/<sha>/main.dart.js` is immutable, and headers are active.
 3. Run the browser smoke test with `STUDIO_ORIGIN=https://studio.saoudi.online`
-   against the prepared artifact root. It rejects external requests, console
-   errors, service workers and account storage.
+   against the prepared artifact root. The inert mode rejects external requests,
+   console errors, service workers and account storage. For a configured Firebase
+   build use `STUDIO_AUTH_ENABLED=1`; verify its signed-out route gate separately
+   from successful Google identity and Worker role acceptance.
 4. Push a harmless Studio copy change to `main`; verify the passing workflow
    updates both the visible copy and `/release.json` without manual upload.
 5. Dispatch the workflow on `main` with `failure_probe=true`. It inserts an
@@ -209,3 +216,38 @@ proof that the custom domain or automatic upload is already live.
   Subsequent validated documentation/UI pushes continue deploying automatically;
   the current source SHA is always available at
   `https://studio.saoudi.online/release.json` and in GitHub's deployment summary.
+
+## T27 Firebase activation — 2026-11-09
+
+- Existing project: `gdg-guess-game`; existing Web app:
+  `1:26367454001:web:4145b31a97c7dcd07c9e10`. Its existing Android app is named
+  BiGuess and matches package `com.flutter.gdg_guess_game`.
+- Firebase Authentication was previously uninitialized (`CONFIGURATION_NOT_FOUND`).
+  The installed Firebase CLI provisioned **only Google Authentication**, using
+  the existing project and app. No Content Backend resources were created.
+- Google provider readback reports `enabled: true`. Authorized-domain readback:
+  `gdg-guess-game.firebaseapp.com`, `gdg-guess-game.web.app`,
+  `studio.saoudi.online`, `localhost`, `127.0.0.1`.
+- The repository variable `STUDIO_PUBLIC_CONFIG_JSON` contains public Web client
+  configuration. `STUDIO_API_BASE_URL` is empty; no production Worker endpoint
+  is enabled. The Pages upload token stays an encrypted deploy-job secret.
+- The workflow validates approved public JSON keys before building and uses the
+  same configuration to generate precise Firebase CSP origins and exact SDK
+  import-wrapper hashes. Arbitrary inline scripts remain blocked. Review hashes
+  and run the real browser smoke test when upgrading FlutterFire. No secret or
+  backend deployment step was added. Unset this variable to restore inert builds.
+- Popup sign-in is the production browser flow. Firebase's default helper origin
+  is used; a same-origin redirect helper/proxy has not been deployed on Pages.
+  Browsers blocking third-party flows must display an actionable sign-in failure
+  and keep every protected route inaccessible.
+- **Live Google identity acceptance is still pending**: a real HTTPS popup must
+  complete with a human-selected Google account after the new frontend deploys.
+  Opening the chooser or cancelling a popup proves only launch/cancellation,
+  not successful authentication. Owner/Collector live content access remains
+  blocked on the separately approved Worker integration. Keep T27 unchecked
+  until its real-browser acceptance evidence is recorded.
+
+The existing T26A live evidence above describes the inert release at that time;
+its zero-external-request/account-storage assertions are not claims about a
+configured Firebase release. Firebase Auth manages its own identity persistence;
+Studio does not cache roles, bearer tokens or private content itself.

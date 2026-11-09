@@ -171,3 +171,76 @@ test('Google key discovery outages and invalid key sets fail closed as service e
     await expect(await request(undefined, await token()), 503, 'auth_unavailable');
   }
 });
+
+test('Studio browser sessions require an exact configured origin and retain server authorization', async t => {
+  const origin = 'https://studio.saoudi.online';
+  const request = await setup(t, { STUDIO_ALLOWED_ORIGINS: JSON.stringify([origin, 'http://localhost:7357']) });
+  const jwt = await token('owner');
+  for (const path of ['/content/v1/studio/session', '/studio/v1/session']) {
+    const response = await request(path, jwt, 'GET', undefined, { Origin: origin });
+    assert.deepEqual(await expect(response, 200), users[0]);
+    assert.equal(response.headers.get('Access-Control-Allow-Origin'), origin);
+    assert.equal(response.headers.get('Vary'), 'Origin');
+    assert.equal(response.headers.get('Access-Control-Allow-Credentials'), null);
+    for (const [identity, status, code] of [[undefined, 401, 'unauthenticated'],
+      [await token('outsider'), 403, 'forbidden'], [await token('collector', { exp: 1 }), 401, 'unauthenticated']]) {
+      const denied = await request(path, identity, 'GET', undefined, { Origin: origin });
+      await expect(denied, status, code);
+      assert.equal(denied.headers.get('Access-Control-Allow-Origin'), origin);
+    }
+  }
+  for (const deniedOrigin of ['null', 'https://evil.example', `${origin}.evil.example`,
+    `${origin}:8443`, 'http://studio.saoudi.online', 'http://localhost:9999']) {
+    const denied = await request(undefined, jwt, 'GET', undefined, { Origin: deniedOrigin });
+    await expect(denied, 403, 'forbidden');
+    assert.equal(denied.headers.get('Access-Control-Allow-Origin'), null);
+  }
+  const local = await request(undefined, jwt, 'GET', undefined, { Origin: 'http://localhost:7357' });
+  await expect(local, 200);
+  assert.equal(local.headers.get('Access-Control-Allow-Origin'), 'http://localhost:7357');
+});
+
+test('Studio preflight permits only explicit origins, methods and headers without calling Firebase', async t => {
+  const origin = 'https://studio.saoudi.online';
+  const request = await setup(t, { STUDIO_ALLOWED_ORIGINS: JSON.stringify([origin]) }, () => {
+    assert.fail('preflight and denied origins must not discover keys');
+  });
+  const headers = { Origin: origin, 'Access-Control-Request-Method': 'GET',
+    'Access-Control-Request-Headers': 'Authorization, Content-Type' };
+  for (const path of ['/content/v1/studio/session', '/studio/v1/session']) {
+    const response = await request(path, undefined, 'OPTIONS', undefined, headers);
+    assert.equal(response.status, 204);
+    assert.equal(await response.text(), '');
+    assert.equal(response.headers.get('Cache-Control'), 'no-store');
+    assert.equal(response.headers.get('Access-Control-Allow-Origin'), origin);
+    assert.equal(response.headers.get('Access-Control-Allow-Headers').includes('authorization'), true);
+  }
+  for (const override of [{ Origin: 'https://evil.example' }, { Origin: 'null' },
+    { 'Access-Control-Request-Method': 'PUT' }, { 'Access-Control-Request-Method': '' },
+    { 'Access-Control-Request-Headers': 'Authorization, X-Role' }]) {
+    const response = await request(undefined, undefined, 'OPTIONS', undefined, { ...headers, ...override });
+    await expect(response, 403, 'forbidden');
+    assert.equal(response.headers.get('Access-Control-Allow-Origin'), null);
+  }
+  await expect(await request(undefined, undefined, 'OPTIONS'), 403, 'forbidden');
+});
+
+test('missing and unsafe Studio origin configurations fail closed for browser traffic', async t => {
+  for (const configuration of [undefined, '', '{', '{}', '[]', '[null]', '["*"]',
+    '["http://studio.saoudi.online"]', '["https://studio.saoudi.online/"]',
+    '["https://studio.saoudi.online", "*"]']) {
+    const request = await setup(t, configuration === undefined ? {} : { STUDIO_ALLOWED_ORIGINS: configuration });
+    const response = await request(undefined, await token(), 'GET', undefined,
+      { Origin: 'https://studio.saoudi.online' });
+    await expect(response, 403, 'forbidden');
+    assert.equal(response.headers.get('Access-Control-Allow-Origin'), null);
+  }
+});
+
+test('removing an allowlisted role denies the same otherwise valid signed token', async t => {
+  const jwt = await token();
+  const before = await setup(t);
+  assert.deepEqual(await expect(await before(undefined, jwt), 200), users[1]);
+  const after = await setup(t, { STUDIO_USERS: JSON.stringify([users[0]]) });
+  await expect(await after(undefined, jwt), 403, 'forbidden');
+});
