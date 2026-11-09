@@ -1,6 +1,6 @@
 {
   "contract": "studio-scope-v1",
-  "status": "proposed-not-worker-proof",
+  "status": "approved-contract-not-worker-proof",
   "actors": {"a": {"role": "collector", "uid": "uid-a"}, "b": {"role": "collector", "uid": "uid-b"}, "expired": {"role": null, "uid": "uid-a"}, "owner": {"role": "owner_admin", "uid": "uid-owner"}, "unlisted": {"role": null, "uid": "uid-unlisted"}},
   "entities": [
     {"id": "topic-main", "resourceType": "topic", "revision": 1, "state": "hidden"},

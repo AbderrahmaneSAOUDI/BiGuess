@@ -1,8 +1,8 @@
 # T27A: contributor scope and administrative reads
 
-Date: 2026-11-09. Status: **proposed; awaiting user approval before T27B**.
+Date: 2026-11-09. Status: **approved by the user; T27A complete**.
 This is an additive Studio contract decision, not an implemented API or a
-deployment approval. T27A remains unchecked until approval is recorded.
+deployment approval. T27B implementation remains a separate task.
 
 Reviewed against `backend/content-api/src/{index,studio-auth,studio-mutations,
 studio-cors,publication}.ts`, migrations 0004/0005, the frozen
@@ -260,9 +260,10 @@ signed JWTs and R2, including no-write assertions and interleaved transactions.
 Technical review: checked role/deletion matrix, positional SQL compatibility,
 both T24 retry calls, generation/publication guards and namespace isolation.
 No existing completed-ticket text, public contract, backend source or applied
-migration is changed here. User approval of this document and its vectors is
-required before marking T27A complete or starting T27B. Approval authorizes the
-specified local T27B implementation only when T27B is requested; production
+migration is changed here. On 2026-11-09 the user explicitly replied **“approve”**
+to the document and 121 acceptance vectors proposed in commit `566cf3d`.
+This records the required contract approval and completes T27A. The specified
+local T27B implementation starts only when T27B is requested; production
 backend/data rollout retains its separate gate.
 
 Verification (2026-11-09): 249 root Flutter tests, root analysis, setup validation

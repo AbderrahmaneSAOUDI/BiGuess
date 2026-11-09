@@ -16,7 +16,7 @@ class StudioScopeContractTests(unittest.TestCase):
         cls.entities = {row['id']: row for row in cls.fixture['entities']}
 
     def test_vectors_are_unique_and_authenticity_is_not_claimed(self):
-        self.assertEqual(self.fixture['status'], 'proposed-not-worker-proof')
+        self.assertEqual(self.fixture['status'], 'approved-contract-not-worker-proof')
         self.assertEqual(len(self.cases), len(self.fixture['cases']))
         for case in self.cases.values():
             with self.subTest(case=case['id']):
