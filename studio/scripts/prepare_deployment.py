@@ -76,7 +76,7 @@ def prepare(source: Path, destination: Path, commit: str, public_config: Path | 
         # Firebase SDK loader, Auth REST token endpoints, and the sign-in helper.
         headers = headers.replace("script-src 'self' 'wasm-unsafe-eval'",
                                   "script-src 'self' 'wasm-unsafe-eval' https://www.gstatic.com https://apis.google.com " + FIREBASE_SCRIPT_HASHES)
-        connections = "connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com " + auth_origin
+        connections = "connect-src 'self' https://apis.google.com/js/gen_204 https://identitytoolkit.googleapis.com https://securetoken.googleapis.com " + auth_origin
         if config.get('STUDIO_API_BASE_URL'):
             connections += ' ' + api_origin(config['STUDIO_API_BASE_URL'])
         headers = headers.replace("connect-src 'self'", connections)
