@@ -243,12 +243,10 @@ project correction** recorded at the end of this section.
   is used; a same-origin redirect helper/proxy has not been deployed on Pages.
   Browsers blocking third-party flows must display an actionable sign-in failure
   and keep every protected route inaccessible.
-- **Live Google identity acceptance is still pending**: a real HTTPS popup must
-  complete with a human-selected Google account after the new frontend deploys.
-  Opening the chooser or cancelling a popup proves only launch/cancellation,
-  not successful authentication. Owner/Collector live content access remains
-  blocked on the separately approved Worker integration. Keep T27 unchecked
-  until its real-browser acceptance evidence is recorded.
+- At initial activation, live Google account completion was pending; chooser
+  launch/cancellation alone did not establish authentication. The user-confirmed
+  completion on the corrected release is recorded below. Owner/Collector live
+  content access remains blocked on the separately approved Worker integration.
 
 The existing T26A live evidence above describes the inert release at that time;
 its zero-external-request/account-storage assertions are not claims about a
@@ -274,6 +272,22 @@ Studio does not cache roles, bearer tokens or private content itself.
   “Studio access is not enabled yet. No private content is available.” This view
   requires a Firebase ID token, grants no role and exposes no protected shell.
   Failed Google authentication and a failed Worker request remain distinct.
-- T27 still requires real Google account completion on the corrected HTTPS site.
-  Popup launch/cancellation checks do not establish successful authentication.
-  Production Worker/D1/R2 and private data remain independently gated.
+- Real Google account completion was confirmed by the user on the corrected
+  HTTPS site, as recorded below. Production Worker/D1/R2 and private data remain
+  independently gated.
+
+### Human Google sign-in completion — 2026-11-09
+
+- After the corrected frontend `612ff88cedf660ca79ab1002ca8119f1068b2e14`
+  deployed to `https://studio.saoudi.online`, the user reported
+  **“Google sign-in completed”**. This is user-confirmed authentication, distinct
+  from the agent's automated popup launch/cancellation checks.
+- The deployed app uses `biguess-firebase`. Its completion screen requires a
+  Firebase ID token before the disabled authorization adapter can display it.
+  It grants no Owner/Collector role and exposes no protected shell or content.
+- T27's remaining human identity acceptance is complete. Role/denial/revocation
+  behavior is covered by the existing local Worker and browser/widget tests;
+  live privileged content access is not claimed. `STUDIO_API_BASE_URL` remains
+  empty, and production backend/data deployment still requires its separate gate.
+- T27A/T27B and other roadmap tickets have not been started or approved by this
+  confirmation.

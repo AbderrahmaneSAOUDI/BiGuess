@@ -116,8 +116,8 @@ is deployed. Only the owner-controlled `studio` CNAME was changed.
   in [DEPLOYMENT.md](DEPLOYMENT.md#t27-firebase-activation--2026-11-09).
 - The production Content API URL remains empty. No Worker, D1 migration, R2
   object or private dataset was deployed. Real Owner/Collector access cannot be
-  claimed from fixtures, and human Google authentication on the live origin is
-  still required before marking T27 complete.
+  claimed from fixtures. Human Google authentication was pending at that stage
+  and was subsequently confirmed below.
 - Chrome executes all 51 focused auth/session/client tests successfully. The
   packaged release also passes real Firebase popup launch/cancellation and
   protected-route refresh checks at 1440×900 and 360×740. These tests open Google
@@ -150,3 +150,24 @@ stalled before executing any tests, including after restarting its isolated
 browser, and was stopped. It is not recorded as passing. The widget regression
 passes in the normal Flutter runner; the packaged release's Playwright browser
 checks pass against the real Google provider and expected project helper.
+
+
+## T27 human acceptance completion — 2026-11-09
+
+The user confirmed **“Google sign-in completed”** after deployment of corrected
+release `612ff88cedf660ca79ab1002ca8119f1068b2e14` at
+`https://studio.saoudi.online`, using `biguess-firebase`. This closes the remaining
+human Google account-completion check; it is not an automated account-login test.
+
+T27 is marked complete using this confirmation and the previously recorded
+implementation/regression evidence. The account has not been granted a Studio
+role by the public frontend. Production role/content access, Content Worker
+rollout, D1/R2 deployment and private publication remain separately gated, with
+the live Content API URL unset. T27A/T27B remain unchecked.
+
+Completion recheck: root Mobile's 249 tests and analysis, setup validation
+(961 checks), 158 tooling tests, Studio formatting/analysis/60 tests/release Web
+build/boundary checks, six deployment packaging tests, and Worker TypeScript
+validation/55 tests all pass. Logs are in `/tmp/biguess-t27-checks/` on the
+verification host. This rerun uses the default unconfigured frontend build;
+configured-browser and human sign-in evidence remains the earlier evidence above.
