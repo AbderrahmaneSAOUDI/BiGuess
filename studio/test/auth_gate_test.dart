@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:biguess_studio/app/studio_app.dart';
 import 'package:biguess_studio/app/studio_route.dart';
 import 'package:biguess_studio/auth/studio_session.dart';
+import 'package:biguess_studio/auth/worker_authorization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -40,6 +41,42 @@ class Authorization implements StudioAuthorization {
 }
 
 void main() {
+  testWidgets(
+    'Google success with disabled backend is distinct from login failure',
+    (tester) async {
+      final identity = Identity();
+      final session = StudioSession(
+        identity,
+        const DisabledStudioAuthorization(),
+      );
+      addTearDown(identity.events.close);
+      await session.start();
+      await tester.pumpWidget(StudioApp(session: session));
+      identity.events.add(null);
+      await tester.pumpAndSettle();
+      expect(find.text('Google sign-in completed'), findsNothing);
+      await tester.tap(find.text('Continue with Google'));
+      await tester.pumpAndSettle();
+      expect(session.phase, SessionPhase.unavailable);
+      expect(session.principal, isNull);
+      expect(find.text('Google sign-in completed'), findsOneWidget);
+      expect(
+        find.text(
+          'Studio access is not enabled yet. No private content is available.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.byType(NavigationRail), findsNothing);
+      expect(find.textContaining('Could not verify access.'), findsNothing);
+      await tester.tap(find.text('Sign out'));
+      await tester.pumpAndSettle();
+      expect(find.text('Google sign-in completed'), findsNothing);
+      expect(find.byType(NavigationRail), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+      session.dispose();
+    },
+  );
+
   for (final role in ['owner_admin', 'collector']) {
     testWidgets(
       '$role shell clears on logout, denial, background and deep links',

@@ -219,6 +219,9 @@ proof that the custom domain or automatic upload is already live.
 
 ## T27 Firebase activation — 2026-11-09
 
+The initial project selection below is historical and **superseded by the user-selected
+project correction** recorded at the end of this section.
+
 - Existing project: `gdg-guess-game`; existing Web app:
   `1:26367454001:web:4145b31a97c7dcd07c9e10`. Its existing Android app is named
   BiGuess and matches package `com.flutter.gdg_guess_game`.
@@ -251,3 +254,26 @@ The existing T26A live evidence above describes the inert release at that time;
 its zero-external-request/account-storage assertions are not claims about a
 configured Firebase release. Firebase Auth manages its own identity persistence;
 Studio does not cache roles, bearer tokens or private content itself.
+
+### User-selected project correction — 2026-11-09
+
+- The user's explicit project is `biguess-firebase`, number `230843736734`.
+  It initially had no registered apps and uninitialized Authentication.
+- Created only the `BiGuess Studio` Web app,
+  `1:230843736734:web:210d943207c2e8b5f1518f`, and enabled Google Authentication.
+- Readback confirms domains `biguess-firebase.firebaseapp.com`,
+  `biguess-firebase.web.app`, `studio.saoudi.online`, `localhost`, `127.0.0.1`.
+  Public Identity Toolkit configuration returns HTTP 200 with the intended project
+  number and Studio domain; the sign-in helper returns HTTP 200.
+- Any future approved Worker integration must verify `FIREBASE_PROJECT_ID=biguess-firebase`
+  and allowlist the new project's Firebase UIDs. Previous-project UIDs do not grant access.
+- Updated `STUDIO_PUBLIC_CONFIG_JSON` to this project/app; the Content API URL
+  stays empty. The previous `gdg-guess-game` project is not used by the corrected
+  frontend and was not disabled or deleted, preserving its existing applications.
+- A missing backend is now displayed as “Google sign-in completed” followed by
+  “Studio access is not enabled yet. No private content is available.” This view
+  requires a Firebase ID token, grants no role and exposes no protected shell.
+  Failed Google authentication and a failed Worker request remain distinct.
+- T27 still requires real Google account completion on the corrected HTTPS site.
+  Popup launch/cancellation checks do not establish successful authentication.
+  Production Worker/D1/R2 and private data remain independently gated.

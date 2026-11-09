@@ -27,7 +27,15 @@ abstract interface class StudioAuthorization {
   Future<StudioPrincipal> lookup(String token);
 }
 
-enum SessionPhase { restoring, signedOut, checking, authorized, denied, error }
+enum SessionPhase {
+  restoring,
+  signedOut,
+  checking,
+  authorized,
+  denied,
+  unavailable,
+  error,
+}
 
 /// Authorization is never persisted. Every restoration/token change requires
 /// the Worker; generations prevent late requests restoring a previous account.
@@ -112,10 +120,11 @@ class StudioSession extends ChangeNotifier {
     } catch (error) {
       if (_disposed || generation != _generation) return;
       final code = _code(error);
-      _clear(
-        code == 'forbidden' ? SessionPhase.denied : SessionPhase.error,
-        code,
-      );
+      _clear(switch (code) {
+        'forbidden' => SessionPhase.denied,
+        'backend-not-configured' => SessionPhase.unavailable,
+        _ => SessionPhase.error,
+      }, code);
     }
   }
 

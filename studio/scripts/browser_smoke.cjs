@@ -4,6 +4,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
+const expectedAuthDomain = process.env.STUDIO_EXPECTED_FIREBASE_AUTH_DOMAIN || (process.env.STUDIO_PUBLIC_CONFIG_FILE ? JSON.parse(fs.readFileSync(process.env.STUDIO_PUBLIC_CONFIG_FILE, 'utf8')).STUDIO_FIREBASE_AUTH_DOMAIN : null);
 const authEnabled = process.env.STUDIO_AUTH_ENABLED === '1' || Boolean(process.env.STUDIO_PUBLIC_CONFIG_FILE);
 const root = process.env.STUDIO_WEB_ROOT ? path.resolve(process.env.STUDIO_WEB_ROOT) : path.resolve(__dirname, '../build/web');
 const headerFile = path.join(root, '_headers');
@@ -52,8 +53,11 @@ const server = http.createServer((req, res) => {
       let offline = false;
       const external = [];
       const privateCalls = [];
+      const authHelpers = [];
       context.on('request', request => {
-        if (new URL(request.url()).pathname.startsWith('/content/v1/')) privateCalls.push(request.url());
+        const requestUrl = new URL(request.url());
+        if (requestUrl.pathname.startsWith('/content/v1/')) privateCalls.push(request.url());
+        if (requestUrl.pathname.startsWith('/__/auth/')) authHelpers.push(requestUrl.hostname);
       });
       await context.route('**/*', route => {
         if (authEnabled) return route.continue();
@@ -95,6 +99,10 @@ const server = http.createServer((req, res) => {
         await page.getByRole('button', {name: 'Continue with Google', exact: true}).click();
         const popup = await popupPromise;
         await popup.waitForURL(url => url.hostname === 'accounts.google.com', {timeout: 30000});
+        if (expectedAuthDomain) {
+          assert(authHelpers.includes(expectedAuthDomain), 'The intended Firebase auth helper must be used');
+          assert(authHelpers.every(domain => domain === expectedAuthDomain), 'No previous Firebase project helper may be used');
+        }
         console.log('Google popup reached accounts.google.com from ' + origin);
         await popup.close();
         await page.getByText('Sign-in was cancelled. Try again when ready.').waitFor({timeout: 30000});

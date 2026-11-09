@@ -124,3 +124,29 @@ is deployed. Only the owner-controlled `studio` CNAME was changed.
   but never submit account credentials. The browser test caught FlutterFire's
   blocked import wrapper; the packaging CSP now permits four exact SDK wrapper
   hashes, preserving the prohibition on arbitrary inline scripts.
+
+## T27 project correction and sign-in status — 2026-11-09
+
+The user explicitly selected `biguess-firebase`, superseding the initial inferred
+project. Created its Studio Web app and enabled Google Authentication, read back
+production/development authorized domains, and verified the public configuration
+and auth helper return HTTP 200. The GitHub public configuration now uses this
+project; the production Content API URL remains empty.
+
+Root Mobile's 249 tests, root analysis, setup validation and all 158 tooling tests
+pass. Studio formatting, fatal-info analysis, all 60 widget/unit tests, configured
+Web release build, asset boundary checks and six packaging tests pass. The new
+widget regression distinguishes completed Google identity with a deliberately
+disabled backend from a failed login; it grants no role, exposes no shell and
+clears its success message on logout.
+
+Packaged desktop and mobile browser checks pass using only the expected
+`biguess-firebase.firebaseapp.com` auth helper, opening Google and cancelling
+safely with no private API calls. These launch/cancellation checks do not replace
+human Google account completion on the corrected live release.
+
+The additional `flutter test --platform chrome test/auth_gate_test.dart` run
+stalled before executing any tests, including after restarting its isolated
+browser, and was stopped. It is not recorded as passing. The widget regression
+passes in the normal Flutter runner; the packaged release's Playwright browser
+checks pass against the real Google provider and expected project helper.

@@ -104,11 +104,13 @@ Root analysis excludes this separate package and continues checking Mobile.
 
 ## Firebase Web configuration (T27)
 
-The existing Firebase project is `gdg-guess-game`, identified by its BiGuess
-Android application (`com.flutter.gdg_guess_game`) and existing Web app
-`1:26367454001:web:4145b31a97c7dcd07c9e10`. Google sign-in is enabled. Authorized
-domains are `studio.saoudi.online`, `localhost`, `127.0.0.1` and the two existing
-Firebase hosting domains. These settings were read back on 2026-11-09.
+The user-selected Studio Firebase project is `biguess-firebase` (project number
+`230843736734`), with Web app `1:230843736734:web:210d943207c2e8b5f1518f`.
+Google sign-in is enabled. Authorized domains are `studio.saoudi.online`,
+`localhost`, `127.0.0.1`, `biguess-firebase.firebaseapp.com` and
+`biguess-firebase.web.app`. These settings were read back on 2026-11-09.
+This supersedes the initially inferred Mobile-associated project; see the
+correction evidence in [DEPLOYMENT.md](DEPLOYMENT.md).
 
 CI optionally reads the repository variable `STUDIO_PUBLIC_CONFIG_JSON`. It
 accepts only public client fields, validated before the Flutter build:
@@ -117,9 +119,9 @@ accepts only public client fields, validated before the Flutter build:
 {
   "STUDIO_FIREBASE_API_KEY": "public Firebase Web API key",
   "STUDIO_FIREBASE_APP_ID": "Firebase Web app ID",
-  "STUDIO_FIREBASE_PROJECT_ID": "gdg-guess-game",
-  "STUDIO_FIREBASE_AUTH_DOMAIN": "gdg-guess-game.firebaseapp.com",
-  "STUDIO_FIREBASE_MESSAGING_SENDER_ID": "26367454001",
+  "STUDIO_FIREBASE_PROJECT_ID": "biguess-firebase",
+  "STUDIO_FIREBASE_AUTH_DOMAIN": "biguess-firebase.firebaseapp.com",
+  "STUDIO_FIREBASE_MESSAGING_SENDER_ID": "230843736734",
   "STUDIO_API_BASE_URL": ""
 }
 ```
@@ -151,3 +153,8 @@ Google authentication alone never grants access. Session restoration, refresh,
 focus/resume checks and denied/error transitions must obtain fresh server roles.
 Logout and account switching discard the previous role immediately. T27 does not
 implement cached private datasets or draft storage.
+
+When Google authentication completes while the Content API is intentionally
+disabled, Studio shows “Google sign-in completed” and explains that Studio access
+is not enabled. This does not grant a role or expose the shell. A real Worker
+connection failure or denied role remains a separate failure state.

@@ -72,6 +72,7 @@ class _StudioAuthGateState extends State<StudioAuthGate>
                 children: [
                   Text(switch (session.phase) {
                     SessionPhase.denied => 'Access denied',
+                    SessionPhase.unavailable => 'Google sign-in completed',
                     SessionPhase.restoring => 'Restoring session',
                     SessionPhase.checking => 'Checking access',
                     _ => 'Sign in to BiGuess Studio',
@@ -116,6 +117,8 @@ class _StudioAuthGateState extends State<StudioAuthGate>
 
   String _message(String? code) => switch (code) {
     null => 'Only accounts authorized by the Studio owner can continue.',
+    'backend-not-configured' =>
+      'Studio access is not enabled yet. No private content is available.',
     'popup-closed-by-user' ||
     'cancelled-popup-request' => 'Sign-in was cancelled. Try again when ready.',
     'popup-blocked' => 'Your browser blocked the popup. Allow popups for this site and try again.',

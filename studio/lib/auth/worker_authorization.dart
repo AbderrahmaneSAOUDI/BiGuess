@@ -46,3 +46,13 @@ class WorkerAuthorization implements StudioAuthorization {
     );
   }
 }
+
+/// Identity may be enabled on the public frontend before the private Worker.
+/// Obtaining a Google token does not grant a Studio role in this configuration.
+class DisabledStudioAuthorization implements StudioAuthorization {
+  const DisabledStudioAuthorization();
+
+  @override
+  Future<StudioPrincipal> lookup(String token) async =>
+      throw const SessionFailure('backend-not-configured');
+}

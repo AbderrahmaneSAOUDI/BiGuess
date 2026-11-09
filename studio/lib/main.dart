@@ -39,7 +39,7 @@ Future<void> main() async {
     final session = StudioSession(
       FirebaseIdentity(FirebaseAuth.instanceFor(app: app)),
       apiBase.isEmpty
-          ? const _UnavailableAuthorization()
+          ? const DisabledStudioAuthorization()
           : WorkerAuthorization(Uri.parse(apiBase), http.Client()),
     );
     runApp(StudioApp(session: session));
@@ -57,11 +57,4 @@ Future<void> main() async {
       ),
     );
   }
-}
-
-class _UnavailableAuthorization implements StudioAuthorization {
-  const _UnavailableAuthorization();
-  @override
-  Future<StudioPrincipal> lookup(String token) async =>
-      throw const SessionFailure('authorization-unavailable');
 }
