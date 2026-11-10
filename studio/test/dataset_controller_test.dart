@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:biguess_studio/auth/studio_session.dart';
 import 'package:biguess_studio/data/dataset_api.dart';
@@ -8,6 +9,8 @@ import 'package:biguess_studio/data/indexed_db_dataset_store.dart';
 import 'package:biguess_studio/data/offline_access_policy.dart';
 import 'package:biguess_studio/data/studio_dataset.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'card_model_test.dart' show localPixel, pixelPng;
 
 import 'support/dataset_test_factory_stub.dart'
     if (dart.library.js_interop) 'support/dataset_test_factory_web.dart';
@@ -796,7 +799,7 @@ void main() {
       await controller.deletePack('pack-a');
       await expectLater(
         controller.saveDraft(card, name: 'Child edit'),
-        throwsA(storageFailure('pack-has-pending-children')),
+        throwsA(storageFailure('pack-not-eligible')),
       );
       expect(controller.snapshot!.drafts.single.action, 'softDelete');
     },
@@ -1152,5 +1155,322 @@ void main() {
     expect(controller.snapshot, isNull);
     expect(controller.scope, isNull);
     expect(api.calls, 0);
+  });
+  List<Map<String, Object?>> cardRecords({
+    String state = 'active',
+    int revision = 1,
+  }) => [
+    ...records('a'),
+    {
+      'resourceType': 'card',
+      'id': 'card-a',
+      'packId': 'pack-a',
+      'name': 'Original Card',
+      'imageReference': 'private-image-a',
+      'difficulty': 1,
+      'state': state,
+      'revision': revision,
+    },
+  ];
+  Future<void> cardConnect({
+    bool owner = false,
+    String state = 'active',
+  }) async {
+    if (owner) authorization.role = 'owner_admin';
+    api.handler = (_, _) async =>
+        InitialDataset(cardRecords(state: state), 'cards');
+    await connect();
+  }
+
+  test('Card creation and offline image replacement retain identity and durable canonical content', () async {
+    await connect();
+    await controller.createCardDraft(
+      packId: 'pack-a',
+      name: 'Ada',
+      difficulty: 2,
+      image: localPixel(),
+    );
+    final id = controller.cards.single.id;
+    final draftId = controller.cards.single.pending!.id;
+    expect(controller.cards.single.revision, 0);
+    expect(controller.cards.single.imageReference, isNull);
+    expect(controller.cards.single.localImage!.base64, pixelPng);
+    expect(controller.snapshot!.drafts.single.value.keys.toSet(), {
+      'name',
+      'imageReference',
+      'difficulty',
+      'packId',
+    });
+    expect(controller.packs.single.isDraft, isTrue);
+    await controller.queueDraft(draftId);
+    online = false;
+    await session.validate();
+    await waitFor(() => controller.phase == DatasetPhase.offline);
+    await controller.updateCardDraft(
+      draftId,
+      packId: 'pack-a',
+      name: 'Local Ada',
+      difficulty: 3,
+      image: localPixel(filename: 'replacement.png'),
+    );
+    expect(controller.cards.single.id, id);
+    await controller.queueDraft(draftId);
+    controller.dispose();
+    api = _Api();
+    controller = createController()..start();
+    await waitFor(() => controller.phase == DatasetPhase.offline);
+    expect(controller.cards.single.id, id);
+    expect(controller.cards.single.name, 'Local Ada');
+    expect(controller.cards.single.difficulty, 3);
+    expect(controller.cards.single.pending!.status, DraftStatus.unsent);
+    expect(controller.cards.single.localImage!.filename, 'replacement.png');
+    expect(api.calls, 0);
+  });
+
+  test('synced Card image replacement preserves Card ID and Pack without changing synced record', () async {
+    await cardConnect();
+    await controller.updateCard(
+      'card-a',
+      name: 'Replacement',
+      difficulty: 3,
+      image: localPixel(),
+      expectedRevision: 1,
+    );
+    final draft = controller.snapshot!.drafts.single;
+    expect(controller.cards.single.id, 'card-a');
+    expect(controller.cards.single.packId, 'pack-a');
+    expect(controller.cards.single.imageReference, isNull);
+    expect(controller.cards.single.localImage, isNotNull);
+    expect(
+      controller.snapshot!.records.last['imageReference'],
+      'private-image-a',
+    );
+    expect(controller.packs.single.isDraft, isTrue);
+    await controller.queueDraft(draft.id);
+    await controller.saveDraft({
+      ...controller.snapshot!.records.last,
+      'packId': 'pack-b',
+      'revision': 999,
+    }, name: 'Renamed replacement');
+    expect(controller.cards.single.difficulty, 3);
+    expect(controller.cards.single.localImage!.base64, pixelPng);
+    expect(controller.cards.single.packId, 'pack-a');
+    expect(controller.snapshot!.drafts, hasLength(1));
+  });
+
+  test('Card validation rejects incomplete content foreign parents moves and client image references', () async {
+    await cardConnect();
+    await expectLater(
+      controller.createCardDraft(
+        packId: 'pack-a',
+        name: 'No image',
+        difficulty: 1,
+      ),
+      throwsA(storageFailure('invalid-card-image')),
+    );
+    await expectLater(
+      controller.createCardDraft(
+        packId: 'pack-a',
+        name: 'Bad difficulty',
+        difficulty: 4,
+        image: localPixel(),
+      ),
+      throwsA(storageFailure('invalid-card')),
+    );
+    await expectLater(
+      controller.createCardDraft(
+        packId: 'pack-b',
+        name: 'Foreign',
+        difficulty: 1,
+        image: localPixel(),
+      ),
+      throwsA(storageFailure('pack-not-eligible')),
+    );
+    await expectLater(
+      controller.updateCard('card-b', name: 'Foreign', difficulty: 1),
+      throwsA(storageFailure('invalid-card-state')),
+    );
+    await controller.createCardDraft(
+      packId: 'pack-a',
+      name: 'Valid',
+      difficulty: 1,
+      image: localPixel(),
+    );
+    final id = controller.snapshot!.drafts.single.id;
+    await expectLater(
+      controller.updateCardDraft(
+        id,
+        packId: 'pack-b',
+        name: 'Move',
+        difficulty: 1,
+      ),
+      throwsA(storageFailure('card-pack-immutable')),
+    );
+    await controller.discardDraft(id);
+    await controller.updateCard('card-a', name: 'Valid', difficulty: 2);
+    final update = controller.snapshot!.drafts.single;
+    controller.snapshot = controller.snapshot!.copyWith(
+      drafts: [
+        update.copyWith(
+          value: {...update.value, 'imageReference': 'foreign-image'},
+        ),
+      ],
+    );
+    await expectLater(
+      controller.queueDraft(update.id),
+      throwsA(storageFailure('invalid-card-image')),
+    );
+    expect(api.calls, 1);
+  });
+
+  test('Collector cannot delete restore purge or queue injected Card lifecycle operations', () async {
+    await cardConnect();
+    for (final action in [
+      controller.deleteCard,
+      controller.restoreCard,
+      controller.purgeCard,
+    ]) {
+      await expectLater(action('card-a'), throwsA(storageFailure('forbidden')));
+    }
+    final record = controller.snapshot!.records.last;
+    final draft = LocalDraft(
+      id: jsonEncode(['card', 'card-a']),
+      resourceType: 'card',
+      resourceId: 'card-a',
+      action: 'softDelete',
+      baseRevision: 1,
+      value: {
+        'name': record['name'],
+        'imageReference': record['imageReference'],
+        'difficulty': 1,
+        'packId': 'pack-a',
+      },
+    );
+    controller.snapshot = controller.snapshot!.copyWith(drafts: [draft]);
+    await expectLater(
+      controller.queueDraft(draft.id),
+      throwsA(storageFailure('forbidden')),
+    );
+    await expectLater(
+      controller.discardDraft(draft.id),
+      throwsA(storageFailure('forbidden')),
+    );
+  });
+
+  test('Owner Card lifecycle respects state stale modal and pending-operation boundaries', () async {
+    await cardConnect(owner: true);
+    await expectLater(
+      controller.hideCard('card-a', expectedRevision: 2),
+      throwsA(storageFailure('draft-conflict')),
+    );
+    expect(controller.packs.single.eligibleCardCount, 1);
+    await controller.hideCard('card-a', expectedRevision: 1);
+    expect(controller.packs.single.isDraft, isTrue);
+    expect(controller.cards.single.state, 'hidden');
+    await expectLater(
+      controller.updateCard('card-a', name: 'Unsafe overwrite', difficulty: 1),
+      throwsA(storageFailure('card-pending-change')),
+    );
+    await controller.discardDraft(controller.cards.single.pending!.id);
+    await controller.deleteCard('card-a');
+    expect(controller.cards.single.state, 'deleted');
+    await controller.queueDraft(controller.cards.single.pending!.id);
+    await controller.discardDraft(controller.cards.single.pending!.id);
+    api.handler = (_, _) async =>
+        InitialDataset(cardRecords(state: 'deleted', revision: 2), 'deleted');
+    await controller.refresh();
+    await controller.restoreCard('card-a', expectedRevision: 2);
+    expect(controller.cards.single.state, 'hidden');
+    await controller.discardDraft(controller.cards.single.pending!.id);
+    await controller.purgeCard('card-a', expectedRevision: 2);
+    expect(controller.cards.single.state, 'purged');
+    await controller.queueDraft(controller.cards.single.pending!.id);
+    expect(controller.snapshot!.drafts.single.action, 'permanentDelete');
+  });
+
+  test('Card drafts cannot orphan Packs and parent disappearance or stale revision prevents queueing', () async {
+    await cardConnect(owner: true);
+    await controller.createCardDraft(
+      packId: 'pack-a',
+      name: 'Child',
+      difficulty: 1,
+      image: localPixel(),
+    );
+    await expectLater(
+      controller.deletePack('pack-a'),
+      throwsA(storageFailure('pack-has-pending-children')),
+    );
+    await controller.discardDraft(controller.snapshot!.drafts.single.id);
+    await controller.deletePack('pack-a');
+    await expectLater(
+      controller.createCardDraft(
+        packId: 'pack-a',
+        name: 'Child',
+        difficulty: 1,
+        image: localPixel(),
+      ),
+      throwsA(storageFailure('pack-not-eligible')),
+    );
+    await controller.discardDraft(controller.snapshot!.drafts.single.id);
+    await controller.updateCard('card-a', name: 'Stale', difficulty: 2);
+    api.handler = (_, _) async =>
+        InitialDataset(cardRecords(revision: 2), 'newer');
+    await controller.refresh();
+    expect(controller.cards.single.pending!.status, DraftStatus.conflict);
+    await expectLater(
+      controller.queueDraft(controller.cards.single.pending!.id),
+      throwsA(storageFailure('draft-conflict')),
+    );
+    await controller.discardDraft(controller.cards.single.pending!.id);
+    await controller.createCardDraft(
+      packId: 'pack-a',
+      name: 'New child',
+      difficulty: 1,
+      image: localPixel(),
+    );
+    api.handler = (_, _) async => const InitialDataset([], 'removed');
+    await controller.refresh();
+    expect(controller.snapshot!.drafts.single.status, DraftStatus.conflict);
+    await expectLater(
+      controller.queueDraft(controller.snapshot!.drafts.single.id),
+      throwsA(storageFailure('draft-conflict')),
+    );
+  });
+
+  test('legacy Card name drafts queue canonically but forged attribution and Pack transfers are rejected', () async {
+    await cardConnect();
+    final record = controller.snapshot!.records.last;
+    final legacy = LocalDraft(
+      id: jsonEncode(['card', 'card-a']),
+      resourceType: 'card',
+      resourceId: 'card-a',
+      baseRevision: 1,
+      value: {...record, 'name': 'Legacy name'},
+    );
+    controller.snapshot = controller.snapshot!.copyWith(
+      drafts: [LocalDraft.fromJson(legacy.toJson())],
+    );
+    await controller.queueDraft(legacy.id);
+    expect(controller.snapshot!.drafts.single.value.keys.toSet(), {
+      'name',
+      'imageReference',
+      'difficulty',
+      'packId',
+    });
+    for (final override in [
+      {'createdByUid': 'foreign'},
+      {'id': 'card-b'},
+      {'packId': 'pack-b'},
+    ]) {
+      controller.snapshot = controller.snapshot!.copyWith(
+        drafts: [
+          legacy.copyWith(value: {...legacy.value, ...override}),
+        ],
+      );
+      await expectLater(
+        controller.queueDraft(legacy.id),
+        throwsA(isA<DatasetStorageFailure>()),
+      );
+    }
   });
 }

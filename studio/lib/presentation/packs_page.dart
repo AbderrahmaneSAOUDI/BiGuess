@@ -7,6 +7,7 @@ import '../data/dataset_store.dart';
 import '../data/pack_summary.dart';
 import '../data/studio_dataset.dart';
 import 'pack_draft_dialog.dart';
+import 'cards_page.dart';
 
 class PacksPage extends StatefulWidget {
   const PacksPage({super.key, required this.controller});
@@ -165,6 +166,11 @@ class _PacksPageState extends State<PacksPage> {
                         ? 'Draft — no eligible Cards; not playable or publishable'
                         : '${pack.eligibleCardCount} eligible Cards · publication status unknown',
                   ),
+                  TextButton(
+                    onPressed: () =>
+                        showPackCards(context, controller, pack.id),
+                    child: const Text('Review Cards'),
+                  ),
                   if (pack.pending != null) ...[
                     Text(switch (pack.pending!.status) {
                       DraftStatus.draft => 'Draft — saved locally',
@@ -302,13 +308,14 @@ class _PackConfirmation extends StatefulWidget {
 }
 
 class _PackConfirmationState extends State<_PackConfirmation> {
-  late final _scope = widget.controller.scope?.namespace;
+  late final String? _scope;
   bool _closed = false;
   bool _saving = false;
   String? _error;
   @override
   void initState() {
     super.initState();
+    _scope = widget.controller.scope?.namespace;
     widget.controller.addListener(_changed);
   }
 

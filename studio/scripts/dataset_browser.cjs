@@ -25,6 +25,7 @@ const returned = [];
 let revoked = false;
 let interrupt = false;
 let packRevision = 1;
+let deniedCardCollector = false;
 const topic = {resourceType:'topic',id:'taxonomy',name:'Shared taxonomy',state:'active',revision:1};
 const hiddenTopic = {resourceType:'topic',id:'taxonomy-hidden',name:'Hidden classification',state:'hidden',revision:2};
 const seasonalTopic = {resourceType:'topic',id:'taxonomy-seasonal',name:'Seasonal Topic',state:'active',revision:1};
@@ -43,7 +44,7 @@ const server = http.createServer((req,res) => {
     requests.push({method:req.method,path:url.pathname,uid});
     res.setHeader('Cache-Control','no-store'); res.setHeader('Content-Type','application/json');
     if (!uid) return res.writeHead(401).end(JSON.stringify({error:{code:'unauthenticated'}}));
-    if (revoked && uid === 'a') return res.writeHead(403).end(JSON.stringify({error:{code:'forbidden'}}));
+    if ((revoked && uid === 'a') || (deniedCardCollector && uid === 'b')) return res.writeHead(403).end(JSON.stringify({error:{code:'forbidden'}}));
     if (req.method !== 'GET') return res.writeHead(405).end('{}');
     if (url.pathname === '/content/v1/studio/session') return res.end(JSON.stringify({uid,email:`${uid}@fixture.test`,role:uid === 'owner' ? 'owner_admin' : 'collector'}));
     if (url.pathname === '/studio/v1/sync/initial') {
@@ -51,7 +52,7 @@ const server = http.createServer((req,res) => {
       if (cursor && cursor !== `${uid}-page2`) return res.writeHead(409).end(JSON.stringify({error:{code:'cursor_expired'}}));
       if (cursor && interrupt) return res.writeHead(503).end(JSON.stringify({error:{code:'storage-unavailable'}}));
       const items = uid === 'owner'
-        ? (cursor ? [card('a'),card('b')] : [...[...sharedTaxonomy,deletedTopic].sort((a,b) => a.id.localeCompare(b.id)),pack('a'),pack('b'),
+        ? (cursor ? [card('a'),card('b'),{...card('a'),id:'card-deleted',name:'Deleted Card fixture',state:'deleted',revision:3}] : [...[...sharedTaxonomy,deletedTopic].sort((a,b) => a.id.localeCompare(b.id)),pack('a'),pack('b'),
           {resourceType:'pack',id:'pack-legacy',topicId:'taxonomy',name:'Unassigned legacy Pack',state:'active',revision:1},
           {resourceType:'pack',id:'pack-deleted',topicId:'taxonomy',name:'Deleted Pack',state:'deleted',revision:3}]).map(ownerProjection)
         : cursor ? [card(uid)] : [...sharedTaxonomy,pack(uid,interrupt)];
@@ -365,6 +366,145 @@ const server = http.createServer((req,res) => {
     }
     assert.equal(await content('Unassigned legacy Pack').count(),0);
     assert.equal(await content('A private pack').count(),0);
+    console.log('T30 Pack lifecycle passed; starting T31 Card authoring flows.');
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR4nGNkqHj2n4GBgYGJAQoAIyICYTlsIJwAAAAASUVORK5CYII=','base64');
+    const preview = () => page.getByRole('img',{name:'Selected image preview',exact:true}).or(page.getByLabel('Selected image preview',{exact:true})).last();
+    const selectImage = async (button,filename) => {
+      const selection = page.waitForEvent('filechooser');
+      await page.getByRole('button',{name:button,exact:true}).click();
+      await (await selection).setFiles({name:filename,mimeType:'image/png',buffer:png});
+      await preview().waitFor();
+      await content(filename).waitFor();
+    };
+    const chooseCardPack = async (name,id) => {
+      await page.getByRole('button',{name:/^Pack(?:\s|$)/}).or(page.getByRole('combobox',{name:/^Pack(?:\s|$)/})).last().click();
+      await page.getByRole('menuitem',{name:new RegExp(`${name}.*${id}`)}).click();
+    };
+    const storedCard = async (uid,name) => page.evaluate(async ({uid,name}) => {
+      const db = await new Promise((resolve,reject) => {
+        const request = indexedDB.open('biguess-studio-datasets');
+        request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+      });
+      try {
+        const values = await new Promise((resolve,reject) => {
+          const request = db.transaction('datasets').objectStore('datasets').getAll();
+          request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+        });
+        const snapshot = values.map(value => JSON.parse(value)).find(value => value.scope.uid === uid);
+        return snapshot?.drafts.find(draft => draft.resourceType === 'card' && draft.value.name === name);
+      } finally { db.close(); }
+    },{uid,name});
+    // Card review is reachable within the scoped Pack; it never requires Topic
+    // administration or an unrestricted global Card lookup.
+    await typeField('Search Packs','B private pack');
+    await page.getByRole('button',{name:'Review Cards',exact:true}).click();
+    await content('B private card').waitFor();
+    assert.equal(await content('A private card').count(),0);
+    await page.getByRole('button',{name:'Close Card review',exact:true}).click();
+    await page.goto(origin + '/cards?account=b');
+    await enableSemantics();
+    await chooseCardPack('B private pack','pack-b');
+    await page.getByRole('button',{name:'New Card',exact:true}).click();
+    await page.getByRole('button',{name:'Save Card locally',exact:true}).click();
+    assert.equal(await page.getByRole('button',{name:'Queue Card commit',exact:true}).count(),0,
+      'an incomplete Card is not silently persisted');
+    await selectImage('Select image','Ada_Lovelace.png');
+    await page.getByRole('textbox',{name:'Card name',exact:true}).click();
+    await page.waitForFunction(() => [...document.querySelectorAll('input,textarea')].some(field => field.value === 'Ada Lovelace'));
+    assert.equal(await page.getByRole('textbox',{name:'Card name',exact:true}).inputValue(),'Ada Lovelace');
+    await page.screenshot({path:'/tmp/t31-card-preview-desktop.png'});
+    await typeField('Card name','B browser identity');
+    await page.getByRole('button',{name:/Difficulty/}).or(page.getByRole('combobox',{name:/Difficulty/})).last().click();
+    await page.getByRole('menuitem',{name:'3 — Hard',exact:true}).click();
+    await page.getByRole('button',{name:'Save Card locally',exact:true}).click();
+    await content('B browser identity').waitFor();
+    const originalCard = await storedCard('b','B browser identity');
+    assert.equal(originalCard.value.packId,'pack-b');
+    assert.equal(originalCard.value.difficulty,3);
+    assert.equal(originalCard.localImage.filename,'Ada_Lovelace.png');
+    assert.equal(originalCard.value.createdByUid,undefined);
+    assert.equal(originalCard.value.ownerUid,undefined);
+    // Replace locally while offline and retain the generated canonical Card ID.
+    await context.setOffline(true);
+    await status(/Offline workspace — local edits only/).waitFor();
+    await chooseCardPack('B private pack','pack-b');
+    await typeField('Search Cards','B browser identity');
+    await page.getByRole('button',{name:'Edit Card',exact:true}).click();
+    await selectImage('Replace image','Replacement_identity.png');
+    await page.getByRole('textbox',{name:'Card name',exact:true}).click();
+    await page.waitForFunction(() => [...document.querySelectorAll('input,textarea')].some(field => field.value === 'B browser identity'));
+    assert.equal(await page.getByRole('textbox',{name:'Card name',exact:true}).inputValue(),'B browser identity',
+      'replacement filenames never overwrite an edited name');
+    await page.getByRole('button',{name:'Save Card locally',exact:true}).click();
+    await page.getByRole('button',{name:'Queue Card commit',exact:true}).click();
+    await content('Unsent commit — queued locally').waitFor();
+    await page.reload();
+    await enableSemantics();
+    await chooseCardPack('B private pack','pack-b');
+    await content('B browser identity').waitFor();
+    const replacementCard = await storedCard('b','B browser identity');
+    assert.equal(replacementCard.resourceId,originalCard.resourceId,'image replacement retains the Card ID');
+    assert.equal(replacementCard.localImage.filename,'Replacement_identity.png');
+    assert.equal(replacementCard.status,'unsent');
+    for (const action of ['Delete Card','Restore Card','Permanently delete Card']) {
+      assert.equal(await page.getByRole('button',{name:action,exact:true}).count(),0);
+    }
+    await page.setViewportSize({width:360,height:920});
+    await typeField('Search Cards','B browser identity');
+    await page.getByRole('button',{name:'Edit Card',exact:true}).click();
+    await preview().waitFor();
+    await page.screenshot({path:'/tmp/t31-card-preview-mobile.png'});
+    await page.getByRole('button',{name:'Cancel',exact:true}).click();
+    await context.setOffline(false);
+    await page.goto(origin + '/cards?account=a');
+    await enableSemantics();
+    await content('A private card').waitFor();
+    assert.equal(await content('B private card').count(),0);
+    assert.equal(await content('B browser identity').count(),0,'Collector local Cards remain account-isolated');
+    // Clear the Owner's prior pending Pack hide before reviewing its children.
+    await page.setViewportSize({width:1440,height:1100});
+    await page.goto(origin + '/my-packs?account=owner');
+    await enableSemantics();
+    await typeField('Search Packs','B private pack');
+    await page.getByRole('button',{name:'Discard local change',exact:true}).click();
+    await page.getByRole('button',{name:'Edit Pack',exact:true}).waitFor();
+    await page.goto(origin + '/cards?account=owner');
+    await enableSemantics();
+    for (const [query,action,confirm] of [
+      ['A private card','Delete Card','delete'],
+      ['Deleted Card fixture','Restore Card','restore'],
+      ['Deleted Card fixture','Permanently delete Card','permanently delete'],
+    ]) {
+      await typeField('Search Cards',query);
+      await page.getByRole('button',{name:action,exact:true}).click();
+      await page.getByRole('button',{name:'Cancel',exact:true}).click();
+      assert.equal(await page.getByRole('button',{name:'Queue Card commit',exact:true}).count(),0);
+      await page.getByRole('button',{name:action,exact:true}).click();
+      await page.getByRole('button',{name:`Confirm local ${confirm}`,exact:true}).click();
+      await page.getByRole('button',{name:'Queue Card commit',exact:true}).click();
+      await content('Unsent commit — queued locally').waitFor();
+      await page.getByRole('button',{name:'Discard Card change',exact:true}).click();
+    }
+    await typeField('Search Cards','A private card');
+    await page.getByRole('button',{name:'Hide Card',exact:true}).click();
+    await page.getByRole('button',{name:'Queue Card commit',exact:true}).click();
+    await content('Unsent commit — queued locally').waitFor();
+    await page.screenshot({path:'/tmp/t31-owner-cards.png'});
+    // A live denial closes an open Card editor and clears selected-image previews.
+    await page.goto(origin + '/cards?account=b');
+    await enableSemantics();
+    await chooseCardPack('B private pack','pack-b');
+    await context.setOffline(true);
+    await status(/Offline workspace — local edits only/).waitFor();
+    await chooseCardPack('B private pack','pack-b');
+    await typeField('Search Cards','B browser identity');
+    await page.getByRole('button',{name:'Edit Card',exact:true}).click();
+    await preview().waitFor();
+    deniedCardCollector = true;
+    await context.setOffline(false);
+    await status('Access denied').waitFor();
+    assert.equal(await preview().count(),0);
+    assert.equal(await content('B browser identity').count(),0);
     for (const response of returned.filter(response => response.uid !== 'owner')) {
       for (const record of response.items.filter(record => record.resourceType === 'topic')) {
         assert.deepEqual(Object.keys(record).sort(),['id','name','resourceType','revision','state']);
@@ -409,7 +549,7 @@ const server = http.createServer((req,res) => {
     assert.deepEqual(errors,[],'no browser runtime errors');
     await page.screenshot({path:'/tmp/t28-dataset-browser-final.png'});
     await context.close();
-    console.log(`T28/T29/T30 dataset Chromium PASS: Owner global/legacy Pack view, stale edit, confirmed delete/restore/purge and durable hide; Owner Topic create/rename/hide/delete/restore/search and queued reload, Collector minimal taxonomy and independent mobile Pack classification;  scoped initial paging, local draft/queue reload, interrupted sync rollback, offline edits/reload, revoked reconnect, first-offline denial, B isolation and sign-out cleanup; ${requests.length} private GETs, zero uploads.`);
+    console.log(`T28/T29/T30/T31 dataset Chromium PASS: Card file selection/preview/name suggestion, difficulty, offline image replacement with stable ID and durable queue, isolated collectors, Owner lifecycle confirmations and live-denial cleanup; Owner global/legacy Pack view, stale edit, confirmed delete/restore/purge and durable hide; Owner Topic create/rename/hide/delete/restore/search and queued reload, Collector minimal taxonomy and independent mobile Pack classification;  scoped initial paging, local draft/queue reload, interrupted sync rollback, offline edits/reload, revoked reconnect, first-offline denial, B isolation and sign-out cleanup; ${requests.length} private GETs, zero uploads.`);
   } catch (error) {
     if (diagnosticPage && !diagnosticPage.isClosed()) {
       console.error('Dataset browser diagnostics:',JSON.stringify({errors,requests,returned,body:await diagnosticPage.locator('body').innerText()}));

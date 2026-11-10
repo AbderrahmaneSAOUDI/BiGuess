@@ -2,7 +2,7 @@ name: biguess
 description: A guess image game with multiple categories.
 publish_to: 'none'
 
-version: 1.532.123+68
+version: 1.532.124+69
 
 environment:
   sdk: '>=3.10.0 <4.0.0'

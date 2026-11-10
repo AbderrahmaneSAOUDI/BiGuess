@@ -8,8 +8,10 @@ import '../data/studio_dataset.dart';
 import 'topics_page.dart';
 import 'pack_draft_dialog.dart';
 import 'packs_page.dart';
+import 'cards_page.dart';
+import 'card_draft_dialog.dart';
 
-/// First-sync workspace. Full Topic/Pack/Card authoring remains in later tickets.
+/// Account-scoped local workspace with explicit pending content operations.
 class DatasetPage extends StatelessWidget {
   const DatasetPage({super.key, required this.route, required this.controller});
 
@@ -101,8 +103,7 @@ class DatasetPage extends StatelessWidget {
             ],
             if (route == StudioRoute.topics) TopicsPage(controller: controller),
             if (route == StudioRoute.myPacks) PacksPage(controller: controller),
-            if (route == StudioRoute.cards)
-              _RecordList(controller: controller, route: route),
+            if (route == StudioRoute.cards) CardsPage(controller: controller),
             if (route == StudioRoute.dashboard && snapshot.drafts.isNotEmpty)
               _DraftList(controller: controller, drafts: snapshot.drafts),
           ] else if (!controller.busy)
@@ -123,68 +124,6 @@ class DatasetPage extends StatelessWidget {
       );
     },
   );
-}
-
-class _RecordList extends StatelessWidget {
-  const _RecordList({required this.controller, required this.route});
-  final DatasetController controller;
-  final StudioRoute route;
-
-  @override
-  Widget build(BuildContext context) {
-    final kind = switch (route) {
-      StudioRoute.topics => 'topic',
-      StudioRoute.myPacks => 'pack',
-      _ => 'card',
-    };
-    final snapshot = controller.snapshot!;
-    final records = snapshot.records
-        .where((record) => record['resourceType'] == kind)
-        .toList();
-    final drafts = snapshot.drafts
-        .where((draft) => draft.resourceType == kind)
-        .toList();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        if (records.isEmpty)
-          const Text('No synchronized records in this view.'),
-        for (final record in records) ...[
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    '${record['name'] ?? record['id']}',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Synced · Revision ${record['revision']} · '
-                    '${record['state']}',
-                  ),
-                  if (kind != 'topic' &&
-                      !{'deleted', 'purged'}.contains(record['state']))
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: TextButton(
-                        onPressed: () => _edit(context, controller, record),
-                        child: const Text('Edit name locally'),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
-        ],
-        if (drafts.isNotEmpty)
-          _DraftList(controller: controller, drafts: drafts),
-      ],
-    );
-  }
 }
 
 class _DraftList extends StatelessWidget {
@@ -237,9 +176,26 @@ class _DraftList extends StatelessWidget {
                         child: const Text('Queue commit'),
                       ),
                     if (draft.status != DraftStatus.conflict &&
-                        draft.resourceType != 'topic')
+                        draft.resourceType != 'topic' &&
+                        {'create', 'update'}.contains(draft.action))
                       TextButton(
                         onPressed: () {
+                          if (draft.resourceType == 'card') {
+                            final card = controller.cards
+                                .where((c) => c.id == draft.resourceId)
+                                .firstOrNull;
+                            if (card != null) {
+                              showDialog<void>(
+                                context: context,
+                                builder: (_) => CardDraftDialog(
+                                  controller: controller,
+                                  packId: card.packId,
+                                  card: card,
+                                ),
+                              );
+                            }
+                            return;
+                          }
                           if (draft.resourceType == 'pack' &&
                               draft.action == 'create') {
                             showDialog<void>(

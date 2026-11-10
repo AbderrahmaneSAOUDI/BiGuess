@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart';
 
 import '../auth/studio_session.dart';
 import 'dataset_api.dart';
+import 'card_image.dart';
+import 'card_summary.dart';
 import 'dataset_store.dart';
 import 'studio_dataset.dart';
 import 'offline_access_policy.dart';
@@ -228,18 +230,24 @@ class DatasetController extends ChangeNotifier {
       };
       final drafts = (prior?.drafts ?? <LocalDraft>[]).map((draft) {
         final remote = byId[jsonEncode([draft.resourceType, draft.resourceId])];
-        final parent = draft.resourceType == 'pack' && draft.action == 'create'
+        final parent =
+            {'pack', 'card'}.contains(draft.resourceType) &&
+                draft.action == 'create'
             ? incoming.records
                   .where(
                     (r) =>
-                        r['resourceType'] == 'topic' &&
-                        r['id'] == draft.value['topicId'],
+                        r['resourceType'] ==
+                            (draft.resourceType == 'pack' ? 'topic' : 'pack') &&
+                        r['id'] ==
+                            draft.value[draft.resourceType == 'pack'
+                                ? 'topicId'
+                                : 'packId'],
                   )
                   .firstOrNull
             : null;
         final conflict = draft.action == 'create'
             ? remote != null ||
-                  (draft.resourceType == 'pack' &&
+                  ({'pack', 'card'}.contains(draft.resourceType) &&
                       (parent == null ||
                           !{'active', 'hidden'}.contains(parent['state'])))
             : remote == null || remote['revision'] != draft.baseRevision;
@@ -353,32 +361,28 @@ class DatasetController extends ChangeNotifier {
         topicId: stored['topicId']! as String,
       );
     }
-    final kind = record['resourceType'];
-    if (!{'pack', 'card'}.contains(kind)) {
-      throw const DatasetStorageFailure('invalid-draft');
+    if (record['resourceType'] == 'card') {
+      final stored = _workingSnapshot().records
+          .where((r) => r['resourceType'] == 'card' && r['id'] == record['id'])
+          .firstOrNull;
+      if (stored == null) throw const DatasetStorageFailure('storage-closed');
+      return updateCard(
+        stored['id']! as String,
+        name: name,
+        difficulty:
+            _workingSnapshot().drafts
+                    .where(
+                      (d) =>
+                          d.resourceType == 'card' &&
+                          d.resourceId == stored['id'],
+                    )
+                    .firstOrNull
+                    ?.value['difficulty']
+                as int? ??
+            stored['difficulty']! as int,
+      );
     }
-    final previous = _workingSnapshot();
-    final stored = previous.records
-        .where((r) => r['resourceType'] == kind && r['id'] == record['id'])
-        .firstOrNull;
-    if (stored == null) throw const DatasetStorageFailure('storage-closed');
-    if (!{'active', 'hidden'}.contains(stored['state'])) {
-      throw const DatasetStorageFailure('invalid-draft');
-    }
-    final key = jsonEncode([kind, record['id']]);
-    final existing = previous.drafts.where((d) => d.id == key).firstOrNull;
-    final draft = LocalDraft(
-      id: key,
-      resourceType: kind! as String,
-      resourceId: record['id']! as String,
-      baseRevision: existing?.baseRevision ?? stored['revision']! as int,
-      value: {...stored, 'name': name},
-      status: existing?.status == DraftStatus.conflict
-          ? DraftStatus.conflict
-          : DraftStatus.draft,
-      publishedRevision: existing?.publishedRevision,
-    );
-    await _saveDrafts([...previous.drafts.where((d) => d.id != key), draft]);
+    throw const DatasetStorageFailure('invalid-draft');
   }
 
   /// Owner working topics include explicit pending changes; Collector taxonomy
@@ -596,6 +600,7 @@ class DatasetController extends ChangeNotifier {
         d.resourceId: d,
     };
     final result = <PackSummary>[];
+    final workingCards = cards;
     for (final record in current.records.where(
       (r) => r['resourceType'] == 'pack',
     )) {
@@ -614,14 +619,16 @@ class DatasetController extends ChangeNotifier {
               _ => record['state']! as String,
             }
           : record['state']! as String;
-      final cardCount = current.records
+      final cardCount = workingCards
           .where(
-            (r) =>
-                r['resourceType'] == 'card' &&
-                r['packId'] == id &&
-                r['state'] == 'active' &&
-                (r['imageReference'] as String? ?? '').isNotEmpty &&
-                (r['name'] as String? ?? '').trim().isNotEmpty,
+            (card) =>
+                card.packId == id &&
+                card.revision > 0 &&
+                card.state == 'active' &&
+                (card.imageReference ?? '').isNotEmpty &&
+                card.name.trim().isNotEmpty &&
+                card.localImage == null &&
+                card.pending?.status != DraftStatus.conflict,
           )
           .length;
       result.add(
@@ -905,6 +912,341 @@ class DatasetController extends ChangeNotifier {
     );
   }
 
+  List<PackSummary> get eligibleCardPacks => List.unmodifiable(
+    packs.where(
+      (pack) =>
+          pack.revision > 0 &&
+          pack.parentEligible &&
+          {'active', 'hidden'}.contains(pack.state) &&
+          pack.pending?.status != DraftStatus.conflict &&
+          !{
+            'softDelete',
+            'restore',
+            'permanentDelete',
+          }.contains(pack.pending?.action),
+    ),
+  );
+
+  List<CardSummary> get cards {
+    final current = snapshot;
+    if (current == null || scope == null) return const [];
+    final pending = {
+      for (final draft in current.drafts.where((d) => d.resourceType == 'card'))
+        draft.resourceId: draft,
+    };
+    final result = <CardSummary>[];
+    for (final record in current.records.where(
+      (r) => r['resourceType'] == 'card',
+    )) {
+      if (scope!.role == 'collector' &&
+          !{'active', 'hidden'}.contains(record['state'])) {
+        continue;
+      }
+      final id = record['id']! as String;
+      final draft = pending.remove(id);
+      final apply = draft != null && draft.status != DraftStatus.conflict;
+      final value = apply ? draft.value : record;
+      result.add(
+        CardSummary(
+          id: id,
+          name: value['name'] as String? ?? record['name'] as String? ?? id,
+          imageReference: value['imageReference'] as String?,
+          difficulty: value['difficulty'] as int? ?? 1,
+          packId: record['packId']! as String,
+          state: apply
+              ? switch (draft.action) {
+                  'hide' || 'restore' => 'hidden',
+                  'softDelete' => 'deleted',
+                  'permanentDelete' => 'purged',
+                  _ => record['state']! as String,
+                }
+              : record['state']! as String,
+          revision: record['revision']! as int,
+          pending: draft,
+          createdByUid: record['createdByUid'] as String?,
+        ),
+      );
+    }
+    for (final draft in pending.values.where((d) => d.action == 'create')) {
+      result.add(
+        CardSummary(
+          id: draft.resourceId,
+          name: draft.value['name']! as String,
+          imageReference: draft.value['imageReference'] as String?,
+          difficulty: draft.value['difficulty']! as int,
+          packId: draft.value['packId']! as String,
+          state: 'active',
+          revision: 0,
+          pending: draft,
+        ),
+      );
+    }
+    result.sort((a, b) {
+      final order = a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      return order == 0 ? a.id.compareTo(b.id) : order;
+    });
+    return List.unmodifiable(result);
+  }
+
+  Map<String, Object?> _cardValue(
+    Map<String, Object?> source, {
+    String? name,
+    int? difficulty,
+    bool replaceImage = false,
+  }) => {
+    'name': name ?? source['name'],
+    'imageReference': replaceImage ? null : source['imageReference'],
+    'difficulty': difficulty ?? source['difficulty'],
+    'packId': source['packId'],
+  };
+
+  void _validateCardOperation(LocalDraft draft) {
+    final current = _workingSnapshot(
+      owner: {
+        'softDelete',
+        'restore',
+        'permanentDelete',
+      }.contains(draft.action),
+    );
+    final record = current.records
+        .where(
+          (r) => r['resourceType'] == 'card' && r['id'] == draft.resourceId,
+        )
+        .firstOrNull;
+    if (!{
+          'create',
+          'update',
+          'hide',
+          'softDelete',
+          'restore',
+          'permanentDelete',
+        }.contains(draft.action) ||
+        draft.id != jsonEncode(['card', draft.resourceId])) {
+      throw const DatasetStorageFailure('invalid-draft');
+    }
+    final metadata = draft.value.keys.where(
+      (key) =>
+          !{'name', 'imageReference', 'difficulty', 'packId'}.contains(key),
+    );
+    if (metadata.isNotEmpty &&
+        !(draft.action == 'update' &&
+            record != null &&
+            metadata.every(
+              (key) =>
+                  {
+                    'resourceType',
+                    'id',
+                    'state',
+                    'revision',
+                    'createdByUid',
+                    'createdAt',
+                  }.contains(key) &&
+                  record.containsKey(key) &&
+                  record[key] == draft.value[key],
+            ))) {
+      throw const DatasetStorageFailure('invalid-draft');
+    }
+    final value = draft.value;
+    if (value['name'] is! String ||
+        value['difficulty'] is! int ||
+        ![1, 2, 3].contains(value['difficulty']) ||
+        value['packId'] is! String) {
+      throw const DatasetStorageFailure('invalid-card');
+    }
+    _name(value['name']! as String);
+    if (draft.localImage != null) {
+      if (!{'create', 'update'}.contains(draft.action) ||
+          value['imageReference'] != null) {
+        throw const DatasetStorageFailure('invalid-card-image');
+      }
+    } else if (value['imageReference'] is! String ||
+        (value['imageReference']! as String).isEmpty) {
+      throw const DatasetStorageFailure('invalid-card-image');
+    }
+    if ({'create', 'update', 'hide', 'restore'}.contains(draft.action) &&
+        !eligibleCardPacks.any((pack) => pack.id == value['packId'])) {
+      throw const DatasetStorageFailure('pack-not-eligible');
+    }
+    if (draft.action == 'create') {
+      if (record != null ||
+          draft.baseRevision != null ||
+          draft.localImage == null) {
+        throw const DatasetStorageFailure('invalid-draft');
+      }
+      return;
+    }
+    if (record == null ||
+        record['revision'] != draft.baseRevision ||
+        draft.status == DraftStatus.conflict) {
+      throw const DatasetStorageFailure('draft-conflict');
+    }
+    if (record['packId'] != value['packId']) {
+      throw const DatasetStorageFailure('card-pack-immutable');
+    }
+    if (draft.localImage == null &&
+        value['imageReference'] != record['imageReference']) {
+      throw const DatasetStorageFailure('invalid-card-image');
+    }
+    if (!{'update'}.contains(draft.action) &&
+        _cardValue(record).entries
+            .any((entry) => value[entry.key] != entry.value)) {
+      throw const DatasetStorageFailure('invalid-draft');
+    }
+    if (record['state'] == 'purged' ||
+        ({'restore', 'permanentDelete'}.contains(draft.action)
+            ? record['state'] != 'deleted'
+            : !{'active', 'hidden'}.contains(record['state'])) ||
+        draft.action == 'hide' && record['state'] != 'active') {
+      throw const DatasetStorageFailure('invalid-card-state');
+    }
+  }
+
+  Future<void> createCardDraft({
+    required String packId,
+    required String name,
+    required int difficulty,
+    CardImage? image,
+  }) async {
+    final current = _workingSnapshot();
+    final id = _newId('card');
+    final draft = LocalDraft(
+      id: jsonEncode(['card', id]),
+      resourceType: 'card',
+      resourceId: id,
+      action: 'create',
+      value: {
+        'name': _name(name),
+        'imageReference': null,
+        'difficulty': difficulty,
+        'packId': packId,
+      },
+      localImage: image,
+    );
+    _validateCardOperation(draft);
+    await _saveDrafts([...current.drafts, draft]);
+  }
+
+  Future<void> updateCard(
+    String id, {
+    required String name,
+    required int difficulty,
+    CardImage? image,
+    int? expectedRevision,
+  }) async {
+    final current = _workingSnapshot();
+    final record = current.records
+        .where((r) => r['resourceType'] == 'card' && r['id'] == id)
+        .firstOrNull;
+    if (record == null) throw const DatasetStorageFailure('invalid-card-state');
+    if (expectedRevision != null && record['revision'] != expectedRevision) {
+      throw const DatasetStorageFailure('draft-conflict');
+    }
+    final existing = current.drafts
+        .where((d) => d.resourceType == 'card' && d.resourceId == id)
+        .firstOrNull;
+    if (existing?.status == DraftStatus.conflict ||
+        existing != null && existing.baseRevision != record['revision']) {
+      throw const DatasetStorageFailure('draft-conflict');
+    }
+    if (existing != null && existing.action != 'update') {
+      throw const DatasetStorageFailure('card-pending-change');
+    }
+    final draft = LocalDraft(
+      id: jsonEncode(['card', id]),
+      resourceType: 'card',
+      resourceId: id,
+      baseRevision: existing?.baseRevision ?? record['revision']! as int,
+      value: _cardValue(
+        existing?.value ?? record,
+        name: _name(name),
+        difficulty: difficulty,
+        replaceImage: image != null,
+      ),
+      localImage: image ?? existing?.localImage,
+    );
+    _validateCardOperation(draft);
+    await _saveDrafts([
+      ...current.drafts.where((d) => d.id != draft.id),
+      draft,
+    ]);
+  }
+
+  Future<void> updateCardDraft(
+    String draftId, {
+    required String packId,
+    required String name,
+    required int difficulty,
+    CardImage? image,
+  }) async {
+    final current = _workingSnapshot();
+    final existing = current.drafts.where((d) => d.id == draftId).firstOrNull;
+    if (existing == null ||
+        existing.resourceType != 'card' ||
+        existing.action != 'create') {
+      throw const DatasetStorageFailure('invalid-draft');
+    }
+    if (existing.status == DraftStatus.conflict) {
+      throw const DatasetStorageFailure('draft-conflict');
+    }
+    if (existing.value['packId'] != packId) {
+      throw const DatasetStorageFailure('card-pack-immutable');
+    }
+    final draft = existing.copyWith(
+      value: _cardValue(
+        existing.value,
+        name: _name(name),
+        difficulty: difficulty,
+        replaceImage: image != null,
+      ),
+      localImage: image,
+      status: DraftStatus.draft,
+    );
+    _validateCardOperation(draft);
+    await _saveDrafts([
+      ...current.drafts.where((d) => d.id != draft.id),
+      draft,
+    ]);
+  }
+
+  Future<void> hideCard(String id, {int? expectedRevision}) =>
+      _cardAction(id, 'hide', expectedRevision: expectedRevision);
+  Future<void> deleteCard(String id, {int? expectedRevision}) =>
+      _cardAction(id, 'softDelete', expectedRevision: expectedRevision);
+  Future<void> restoreCard(String id, {int? expectedRevision}) =>
+      _cardAction(id, 'restore', expectedRevision: expectedRevision);
+  Future<void> purgeCard(String id, {int? expectedRevision}) =>
+      _cardAction(id, 'permanentDelete', expectedRevision: expectedRevision);
+
+  Future<void> _cardAction(
+    String id,
+    String action, {
+    int? expectedRevision,
+  }) async {
+    final current = _workingSnapshot(owner: action != 'hide');
+    if (current.drafts.any(
+      (d) => d.resourceType == 'card' && d.resourceId == id,
+    )) {
+      throw const DatasetStorageFailure('card-pending-change');
+    }
+    final record = current.records
+        .where((r) => r['resourceType'] == 'card' && r['id'] == id)
+        .firstOrNull;
+    if (record == null) throw const DatasetStorageFailure('invalid-card-state');
+    if (expectedRevision != null && record['revision'] != expectedRevision) {
+      throw const DatasetStorageFailure('draft-conflict');
+    }
+    final draft = LocalDraft(
+      id: jsonEncode(['card', id]),
+      resourceType: 'card',
+      resourceId: id,
+      action: action,
+      baseRevision: record['revision']! as int,
+      value: _cardValue(record),
+    );
+    _validateCardOperation(draft);
+    await _saveDrafts([...current.drafts, draft]);
+  }
+
   void _validateQueuedDraft(LocalDraft draft) {
     final current = _workingSnapshot(owner: draft.resourceType == 'topic');
     final record = current.records
@@ -956,6 +1298,8 @@ class DatasetController extends ChangeNotifier {
       }
     } else if (draft.resourceType == 'pack') {
       _validatePackOperation(draft);
+    } else if (draft.resourceType == 'card') {
+      _validateCardOperation(draft);
     }
   }
 
@@ -975,6 +1319,8 @@ class DatasetController extends ChangeNotifier {
                             'name': d.value['name'],
                             'topicId': d.value['topicId'],
                           }
+                        : d.resourceType == 'card'
+                        ? _cardValue(d.value)
                         : null,
                   )
                 : d,

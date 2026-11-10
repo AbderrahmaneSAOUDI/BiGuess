@@ -487,3 +487,82 @@ test('Owner manages unassigned legacy Packs without claiming them and permanentl
   await expect(await s.commit('pack', 'pack-a', [operation('pack', 'pack-a', 'restore')], 4), 410, 'deleted');
   await expect(await s.commit('pack', 'pack-a', [newPack('pack-a')], 0), 412, 'revision_conflict');
 });
+
+// T31: Card authoring accepts only canonical product fields; scope/audit fields
+// cannot be used to reparent a Card or select its authoritative creator.
+test('Card editor validation rejects noncanonical fields, invalid difficulty and Pack moves without partial writes', async t => {
+  const s = await setup(t); await s.seed();
+  const value = { name: 'Canonical Card', packId: 'pack-a', imageReference, difficulty: 1 };
+  const before = await s.snapshot();
+  const invalid = [
+    ...[0, 4, 1.5, '2', null].map(difficulty => ({ ...value, difficulty })),
+    { ...value, name: '' }, { ...value, name: ' padded ' },
+    { ...value, createdByUid: 'b' }, { ...value, state: 'active' },
+    { ...value, description: 'Unapproved product field' },
+    { ...value, imageReference: 'https://example.test/image.webp' },
+  ];
+  for (const actor of ['a', 'owner']) {
+    for (const candidate of invalid) {
+      await expect(await s.commit('pack', 'pack-a', [operation('card', 'card-a', 'update', candidate)], 1, { actor }), 422, 'validation_failed');
+    }
+    await expect(await s.commit('pack', 'pack-a', [operation('card', 'card-a', 'update',
+      { ...value, packId: 'pack-b' })], 1, { actor }), 422, 'validation_failed');
+  }
+  assert.deepEqual(await s.snapshot(), before, 'invalid edits cannot change Cards, parent revisions, attribution or feeds');
+});
+
+test('Card image replacement retains canonical identity and creator, uses Pack-bound references and rejects stale edits', async t => {
+  const s = await setup(t); await s.seed();
+  const secondImage = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
+  const secondReference = `objects/${createHash('sha256').update(secondImage).digest('hex')}.png`;
+  const bucket = await s.mf.getR2Bucket('CONTENT');
+  await bucket.put(secondReference, secondImage, { httpMetadata: { contentType: 'image/png' } });
+  const replacement = { name: 'Renamed identity', packId: 'pack-a', imageReference: secondReference, difficulty: 3 };
+  const unbound = await s.snapshot();
+  await expect(await s.commit('pack', 'pack-a', [operation('card', 'card-a', 'update', replacement)], 1, { actor: 'a' }), 404, 'not_found');
+  assert.deepEqual(await s.snapshot(), unbound);
+  // Trusted ingestion binds image bytes; the browser cannot create this grant.
+  await s.db.prepare('INSERT INTO studio_pack_images VALUES (?, ?, ?, ?)')
+    .bind('pack-a', secondReference, 'owner', new Date().toISOString()).run();
+  await expect(await s.commit('pack', 'pack-a', [operation('card', 'card-a', 'update', replacement)], 1, { actor: 'a' }));
+  const wire = (await expect(await s.request('/studio/v1/cards/card-a'))).item;
+  assert.equal(wire.id, 'card-a'); assert.equal(wire.packId, 'pack-a');
+  assert.equal(wire.name, 'Renamed identity'); assert.equal(wire.difficulty, 3);
+  assert.notEqual(wire.imageReference, secondReference, 'administrative references remain Pack-scoped');
+  assert.equal((await s.pages('/studio/v1/packs/pack-a/cards')).items.length, 1);
+  assert.equal(await s.db.prepare("SELECT created_by_uid FROM studio_creators WHERE resource_type='card' AND resource_id='card-a'").first('created_by_uid'), 'a');
+  const saved = await s.snapshot();
+  await expect(await s.commit('pack', 'pack-a', [operation('card', 'card-a', 'update',
+    { ...replacement, name: 'Stale text' })], 1, { actor: 'a' }), 412, 'revision_conflict');
+  await expect(await s.request('/studio/v1/cards/card-a', { actor: 'b' }), 404, 'not_found');
+  await expect(await s.commit('pack', 'pack-b', [operation('card', 'card-b', 'update',
+    { ...replacement, packId: 'pack-b', imageReference: wire.imageReference })], 1, { actor: 'b' }), 404, 'not_found');
+  assert.deepEqual(await s.snapshot(), saved);
+});
+
+test('Collector Card authoring and hide are isolated; only Owner can delete, restore and purge another contributor Card', async t => {
+  const s = await setup(t); await s.seed();
+  await expect(await s.commit('pack', 'pack-a', [newCard('author-card', 'pack-a')], 1, { actor: 'a' }));
+  const initial = await s.snapshot();
+  for (const action of ['softDelete', 'restore', 'permanentDelete']) {
+    await expect(await s.commit('pack', 'pack-a', [operation('card', 'author-card', action)], 2, { actor: 'a' }), 403, 'forbidden');
+  }
+  for (const action of ['hide', 'update']) {
+    const edit = operation('card', 'author-card', action, action === 'update'
+      ? { name: 'Foreign edit', packId: 'pack-a', imageReference, difficulty: 2 } : undefined);
+    await expect(await s.commit('pack', 'pack-a', [edit], 2, { actor: 'b' }), 404, 'not_found');
+  }
+  assert.deepEqual(await s.snapshot(), initial);
+  await expect(await s.commit('pack', 'pack-a', [operation('card', 'author-card', 'hide')], 2, { actor: 'a' }));
+  assert.equal((await s.row('card', 'author-card')).state, 'hidden');
+  await expect(await s.commit('pack', 'pack-a', [operation('card', 'author-card', 'softDelete')], 3));
+  await expect(await s.request('/studio/v1/cards/author-card'), 404, 'not_found');
+  await expect(await s.commit('pack', 'pack-a', [operation('card', 'author-card', 'restore')], 4));
+  assert.equal((await expect(await s.request('/studio/v1/cards/author-card'))).item.state, 'hidden');
+  await expect(await s.commit('pack', 'pack-a', [operation('card', 'author-card', 'softDelete')], 5));
+  await expect(await s.commit('pack', 'pack-a', [operation('card', 'author-card', 'permanentDelete')], 6));
+  assert.equal((await s.row('card', 'author-card')).state, 'purged');
+  assert.equal((await s.row('card', 'author-card')).value, null);
+  await expect(await s.commit('pack', 'pack-a', [operation('card', 'author-card', 'restore')], 7), 410, 'deleted');
+  assert.equal(await s.db.prepare("SELECT created_by_uid FROM studio_creators WHERE resource_type='card' AND resource_id='author-card'").first('created_by_uid'), 'a');
+});

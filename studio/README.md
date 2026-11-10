@@ -252,7 +252,7 @@ when the new field is absent. Older app versions may refuse newer operation
 metadata rather than reinterpret it; they do not delete those stored drafts.
 
 See [T29 verification](T29-VERIFICATION.md). Pack lifecycle is covered by T30
-below; Card authoring and server mutation transport remain later tickets. The
+below; Card authoring is covered by T31 and server mutation transport remains a later ticket. The
 private Content Backend is not activated or deployed by this work.
 
 ## Contributor Pack administration (T30)
@@ -285,6 +285,43 @@ may reject this new operation instead of misinterpreting it.
 A Pack without active Cards with a nonempty name and image reference is shown
 as a draft, never as playable or publishable. The administrative dataset does
 not establish publication status, so even Packs with eligible Cards do not gain
-a publication badge. Card authoring and mutation transport remain later tickets.
+a publication badge. Card authoring is covered by T31 below; mutation transport remains a later ticket.
 No Content Backend deployment, API activation or mutation upload is added.
 See [T30 verification](T30-VERIFICATION.md).
+
+## Card editing and local image review (T31)
+
+Open **My Packs → Review Cards** or use **Cards → Pack** to work inside one
+existing scoped Pack. The Card form contains Name, Image selection, Difficulty
+1–3 and its fixed Pack relationship. IDs and readonly creator/revision/lifecycle
+information are separate review metadata. There are no semantic fields such as
+biography, tags or aliases, and no Card publishing route.
+
+Collectors create/edit/hide only within their authenticated Worker's scoped
+Packs. They cannot delete, restore, purge or move Cards. Owner can edit any
+scoped Card and prepare confirmed soft deletion, restoration into hidden state,
+or permanent deletion. A Card's ID and Pack are preserved through name,
+difficulty and image changes, including before its first upload. Authoring needs
+an existing eligible Pack and Topic; unsynced/deleted/restoring/conflicting
+parents are unavailable. Pending Card changes block destructive parent changes.
+Account or role changes close private review/editor dialogs and clear inputs.
+
+The browser file picker accepts one JPEG/PNG/WebP candidate up to 5 MiB, checks
+its MIME/signature and previews local bytes. A filename suggests the name only
+when the name field is empty; replacing an image preserves an entered name and
+the Card ID. Cancelled or failed selection retains the previous image. These
+are selection guards, not full image decoding/normalization or publication
+validation. Existing server references remain readonly; their private bytes are
+not fetched for preview by this ticket.
+
+Saving persists the candidate attachment separately from the four canonical
+product fields in the account's IndexedDB draft. Reopening offline restores its
+name, difficulty, original ID and image preview if site storage survives.
+Queue Card commit explicitly persists an unsent local intent. A selected image
+has no fabricated remote reference and cannot become an upload-ready metadata
+operation until the separate T32/T32A normalization and authenticated ingestion
+flow supplies a valid Pack-bound image reference. No server mutation occurs.
+Uncommitted/replaced images and hidden/deleted/conflicting Cards do not make a
+Pack playable. Quota failures retain form inputs and the prior saved snapshot.
+Legacy T28 name drafts remain compatible; matching readonly metadata is stripped
+when queueing. See [T31 verification](T31-VERIFICATION.md).
