@@ -6,6 +6,7 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const expectedAuthDomain = process.env.STUDIO_EXPECTED_FIREBASE_AUTH_DOMAIN || (process.env.STUDIO_PUBLIC_CONFIG_FILE ? JSON.parse(fs.readFileSync(process.env.STUDIO_PUBLIC_CONFIG_FILE, 'utf8')).STUDIO_FIREBASE_AUTH_DOMAIN : null);
 const authEnabled = process.env.STUDIO_AUTH_ENABLED === '1' || Boolean(process.env.STUDIO_PUBLIC_CONFIG_FILE);
+const offlineShellEnabled = process.env.STUDIO_OFFLINE_SHELL === '1' || Boolean(process.env.STUDIO_PUBLIC_CONFIG_FILE && JSON.parse(fs.readFileSync(process.env.STUDIO_PUBLIC_CONFIG_FILE, 'utf8')).STUDIO_API_BASE_URL);
 const root = process.env.STUDIO_WEB_ROOT ? path.resolve(process.env.STUDIO_WEB_ROOT) : path.resolve(__dirname, '../build/web');
 const headerFile = path.join(root, '_headers');
 const headerRules = [];
@@ -110,7 +111,22 @@ const server = http.createServer((req, res) => {
         assert.deepEqual(privateCalls, [], 'No private API calls before Worker authorization');
         await page.screenshot({path: `/tmp/t27-auth-${mobile ? 'mobile' : 'desktop'}.png`});
         assert.deepEqual(errors.filter(error => !error.includes('popup-closed-by-user')), [], 'No browser runtime errors');
-        assert.equal(await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length), 0);
+        if (offlineShellEnabled) {
+          await page.evaluate(async () => { await navigator.serviceWorker.ready; });
+          assert.equal(await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length), 1);
+          const cachedPaths = await page.evaluate(async () => {
+            const paths = [];
+            for (const name of await caches.keys()) {
+              const cache = await caches.open(name);
+              paths.push(...(await cache.keys()).map(request => new URL(request.url).pathname));
+            }
+            return paths;
+          });
+          assert(cachedPaths.every(path => path === '/index.html' || path === '/studio-shell-register.js' || path.startsWith('/releases/')),
+            'Offline shell Cache Storage contains public static files only');
+        } else {
+          assert.equal(await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length), 0);
+        }
         await context.close();
         console.log(`${mobile ? 'Mobile' : 'Desktop'}: real Firebase popup, cancellation and protected deep links passed`);
         continue;

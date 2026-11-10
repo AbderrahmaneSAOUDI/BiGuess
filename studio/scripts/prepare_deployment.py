@@ -32,6 +32,56 @@ FIREBASE_SCRIPT_HASHES = " ".join("'sha256-" + value + "'" for value in (
     'E5pQKGuCE4yyzi3hBHqfnUZ9xuaXZ4NGzdrGhm0zDsk=',
 ))
 
+SPA_ROUTES = ('/', '/index.html', '/dashboard', '/topics', '/my-packs',
+              '/cards', '/profile', '/login', '/not-found')
+
+
+def offline_shell(destination: Path, release: Path, commit: str) -> None:
+    """Cache public build artifacts only; account data stays exclusively in IDB."""
+    paths = ['/index.html', '/studio-shell-register.js'] + sorted('/' + p.relative_to(destination).as_posix()
+                                    for p in release.rglob('*') if p.is_file())
+    template = (Path(__file__).parent / 'static_shell_worker.js').read_text()
+    worker = template.replace('__CACHE_NAME__', json.dumps('biguess-studio-shell-' + commit))
+    worker = worker.replace('__STATIC_PATHS__', json.dumps(paths))
+    worker = worker.replace('__SPA_ROUTES__', json.dumps(SPA_ROUTES))
+    (destination / 'studio-shell-worker.js').write_text(worker)
+    (destination / 'studio-shell-register.js').write_text(
+        "if ('serviceWorker' in navigator) {\n"
+        "  window.addEventListener('load', () => {\n"
+        "    navigator.serviceWorker.register('/studio-shell-worker.js', {scope: '/', updateViaCache: 'none'})\n"
+        "      .catch(() => { console.info('Offline shell unavailable; online Studio remains available.'); });\n"
+        "  });\n}\n")
+    html = (destination / 'index.html').read_text()
+    html = html.replace('</head>', '<script src="/studio-shell-register.js" defer></script>\n</head>')
+    (destination / 'index.html').write_text(html)
+
+
+def disable_offline_shell(destination: Path) -> None:
+    """A normal API-disabled release also retires a previously installed shell."""
+    (destination / 'studio-shell-cleanup.js').write_text(
+        "window.addEventListener('load', async () => {\n"
+        "  try {\n"
+        "    if ('serviceWorker' in navigator) {\n"
+        "      for (const registration of await navigator.serviceWorker.getRegistrations()) {\n"
+        "        const own = [registration.active, registration.waiting, registration.installing].some(worker => {\n"
+        "          if (!worker) return false;\n"
+        "          const url = new URL(worker.scriptURL);\n"
+        "          return url.origin === location.origin && url.pathname === '/studio-shell-worker.js';\n"
+        "        });\n"
+        "        if (own) await registration.unregister();\n"
+        "      }\n"
+        "    }\n"
+        "    if ('caches' in window) {\n"
+        "      for (const key of await caches.keys()) {\n"
+        "        if (key.startsWith('biguess-studio-shell-')) await caches.delete(key);\n"
+        "      }\n"
+        "    }\n"
+        "  } catch (_) { console.info('Previous offline shell cleanup is unavailable.'); }\n"
+        "});\n")
+    html = (destination / 'index.html').read_text().replace(
+        '</head>', '<script src="/studio-shell-cleanup.js" defer></script>\n</head>')
+    (destination / 'index.html').write_text(html)
+
 
 def prepare(source: Path, destination: Path, commit: str, public_config: Path | None = None) -> None:
     config = read_config(public_config)
@@ -81,6 +131,13 @@ def prepare(source: Path, destination: Path, commit: str, public_config: Path | 
             connections += ' ' + api_origin(config['STUDIO_API_BASE_URL'])
         headers = headers.replace("connect-src 'self'", connections)
         headers = headers.replace("object-src 'none'", "frame-src " + auth_origin + "; object-src 'none'")
+    if config.get('STUDIO_API_BASE_URL'):
+        offline_shell(destination, release, commit)
+        headers += '\n/studio-shell-worker.js\n  Cache-Control: no-cache\n  Service-Worker-Allowed: /\n'
+        headers += '\n/studio-shell-register.js\n  Cache-Control: no-cache\n'
+    else:
+        disable_offline_shell(destination)
+        headers += '\n/studio-shell-cleanup.js\n  Cache-Control: no-cache\n'
     for route in ('/', '/index.html', '/release.json', '/dashboard', '/topics', '/my-packs', '/cards', '/profile', '/login', '/not-found'):
         headers += f'\n{route}\n  Cache-Control: public, max-age=0, must-revalidate\n'
     (destination / '_headers').write_text(headers)

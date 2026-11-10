@@ -263,6 +263,8 @@ void main() {
       expect(session.principal, isNull);
       await session.signIn();
       expect(identity.popups, 1);
+      authorization.handler = (_) async =>
+          const StudioPrincipal('uid-b', 'b@example.test', 'collector');
       identity.controller.add('uid-b');
       await flush();
       expect(session.phase, SessionPhase.authorized);

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../app/studio_route.dart';
 import '../auth/studio_session.dart';
+import '../data/dataset_controller.dart';
+import 'dataset_page.dart';
 import '../app/studio_icon_asset.dart';
 import '../app/studio_theme.dart';
 import 'studio_brand.dart';
@@ -16,9 +18,11 @@ class StudioShell extends StatelessWidget {
     this.principal,
     this.onLogout,
     this.onSwitchAccount,
+    this.dataset,
   });
 
   final StudioPrincipal? principal;
+  final DatasetController? dataset;
   final VoidCallback? onLogout;
   final VoidCallback? onSwitchAccount;
 
@@ -161,7 +165,15 @@ class StudioShell extends StatelessWidget {
                           alignment: Alignment.topLeft,
                           child: ConstrainedBox(
                             constraints: const BoxConstraints(maxWidth: 1040),
-                            child: _PlaceholderPage(route: route),
+                            child:
+                                dataset == null ||
+                                    route == StudioRoute.notFound ||
+                                    route == StudioRoute.login
+                                ? _PlaceholderPage(route: route)
+                                : DatasetPage(
+                                    route: route,
+                                    controller: dataset!,
+                                  ),
                           ),
                         ),
                       ),

@@ -32,6 +32,7 @@ enum SessionPhase {
   signedOut,
   checking,
   authorized,
+  offline,
   denied,
   unavailable,
   error,
@@ -44,14 +45,30 @@ class StudioSession extends ChangeNotifier {
     this.identity,
     this.authorization, {
     this.recheckInterval = const Duration(minutes: 1),
-  });
+    bool Function()? online,
+    this.connectionChanges,
+  }) : online = online ?? (() => true);
   final StudioIdentity identity;
   final StudioAuthorization authorization;
   final Duration recheckInterval;
+  final bool Function() online;
+  final Stream<bool>? connectionChanges;
+  String? identityUid;
+  bool get signedOutByUser => _signedOutByUser;
   SessionPhase phase = SessionPhase.restoring;
   StudioPrincipal? principal;
   String? errorCode;
+  String? _authorizedToken;
+
+  /// Exact bearer verified by /session for this scope; never persisted.
+  String? tokenFor(String uid, String role) =>
+      phase == SessionPhase.authorized &&
+          principal?.uid == uid &&
+          principal?.role == role
+      ? _authorizedToken
+      : null;
   StreamSubscription<String?>? _subscription;
+  StreamSubscription<bool>? _connectionSubscription;
   Timer? _timer;
   int _generation = 0;
   bool _disposed = false;
@@ -61,12 +78,18 @@ class StudioSession extends ChangeNotifier {
 
   void _clear(SessionPhase value, [String? code]) {
     principal = null;
+    _authorizedToken = null;
     phase = value;
     errorCode = code;
     if (!_disposed) notifyListeners();
   }
 
   Future<void> start() async {
+    _connectionSubscription ??= connectionChanges?.listen((_) {
+      if (!_suspended && !_signedOutByUser && identityUid != null) {
+        unawaited(validate(refresh: true));
+      }
+    });
     try {
       await identity.restore().timeout(const Duration(seconds: 20));
     } catch (error) {
@@ -78,6 +101,7 @@ class StudioSession extends ChangeNotifier {
     _subscription = identity.changes.listen(
       (uid) {
         if (_suspended || _signingOut || _signedOutByUser) return;
+        identityUid = uid;
         if (uid == null) {
           _generation++;
           if (phase != SessionPhase.error) _clear(SessionPhase.signedOut);
@@ -105,6 +129,10 @@ class StudioSession extends ChangeNotifier {
     }
     final generation = ++_generation;
     _clear(SessionPhase.checking);
+    if (!online()) {
+      _clear(SessionPhase.offline, 'offline');
+      return;
+    }
     try {
       final token = await identity
           .token(refresh: refresh)
@@ -114,7 +142,12 @@ class StudioSession extends ChangeNotifier {
           .lookup(token)
           .timeout(const Duration(seconds: 15));
       if (_disposed || generation != _generation || _suspended) return;
+      if (identityUid != null && result.uid != identityUid) {
+        throw const SessionFailure('session-expired');
+      }
+      identityUid = result.uid;
       principal = result;
+      _authorizedToken = token;
       phase = SessionPhase.authorized;
       notifyListeners();
     } catch (error) {
@@ -157,6 +190,7 @@ class StudioSession extends ChangeNotifier {
     _clear(SessionPhase.checking);
     try {
       await identity.signOut().timeout(const Duration(seconds: 15));
+      identityUid = null;
       _clear(SessionPhase.signedOut);
     } catch (error) {
       _clear(SessionPhase.error, _code(error));
@@ -168,6 +202,15 @@ class StudioSession extends ChangeNotifier {
   Future<void> switchAccount() async {
     await logout();
     // A second explicit click opens Google so browsers retain user activation.
+  }
+
+  /// A private API denial invalidates the rendered workspace just like /session.
+  void rejectAuthorization(String code) {
+    _generation++;
+    _clear(
+      code == 'forbidden' ? SessionPhase.denied : SessionPhase.error,
+      code,
+    );
   }
 
   void suspend() {
@@ -190,6 +233,7 @@ class StudioSession extends ChangeNotifier {
     _generation++;
     _timer?.cancel();
     unawaited(_subscription?.cancel());
+    unawaited(_connectionSubscription?.cancel());
     super.dispose();
   }
 }

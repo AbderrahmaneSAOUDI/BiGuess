@@ -8,6 +8,9 @@ import 'app/studio_app.dart';
 import 'auth/firebase_identity.dart';
 import 'auth/studio_session.dart';
 import 'auth/worker_authorization.dart';
+import 'data/dataset_api.dart';
+import 'data/dataset_controller.dart';
+import 'data/network_state.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -36,13 +39,36 @@ Future<void> main() async {
         authDomain: authDomain,
       ),
     ).timeout(const Duration(seconds: 20));
+    final network = BrowserNetwork();
+    final authorizationClient = http.Client();
     final session = StudioSession(
       FirebaseIdentity(FirebaseAuth.instanceFor(app: app)),
       apiBase.isEmpty
           ? const DisabledStudioAuthorization()
-          : WorkerAuthorization(Uri.parse(apiBase), http.Client()),
+          : WorkerAuthorization(Uri.parse(apiBase), authorizationClient),
+      online: () => network.online,
+      connectionChanges: network.changes,
     );
-    runApp(StudioApp(session: session));
+    final dataset = apiBase.isEmpty
+        ? null
+        : DatasetController(
+            projectId: projectId,
+            session: session,
+            api: WorkerDatasetApi(Uri.parse(apiBase), http.Client()),
+          );
+    dataset?.start();
+    runApp(
+      StudioApp(
+        session: session,
+        dataset: dataset,
+        onDispose: () {
+          dataset?.dispose();
+          session.dispose();
+          network.dispose();
+          authorizationClient.close();
+        },
+      ),
+    );
     await session.start();
   } catch (_) {
     runApp(

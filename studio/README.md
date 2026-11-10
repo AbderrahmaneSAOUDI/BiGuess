@@ -47,8 +47,9 @@ identity and Worker-session adapters; no Mobile plugins are imported.
   Loading and offline states are presentation components, not fake live status
   indicators; no network probes run. Startup HTML also reports loading/failure.
 - `lib/auth/`: Firebase identity, short-lived Worker role checks and browser
-  session lifecycle. Roles and content are never persisted in browser storage.
-  Later tickets own account-isolated drafts and publishing.
+  session lifecycle. Live Worker authorization and bearer tokens are never
+  persisted by the dataset layer. `lib/data/` owns T28 account/role-isolated
+  IndexedDB snapshots and local draft queues; publishing remains later work.
 - Do not import root Mobile UI, providers, gameplay, native plugins or bundled
   character assets. No shared Dart models are needed for empty routes. When
   needed, stable wire contracts live under `../contracts/content/`; share only
@@ -152,9 +153,66 @@ and [Google sign-in configuration](https://firebase.google.com/docs/auth/web/goo
 Google authentication alone never grants access. Session restoration, refresh,
 focus/resume checks and denied/error transitions must obtain fresh server roles.
 Logout and account switching discard the previous role immediately. T27 does not
-implement cached private datasets or draft storage.
+implement cached private datasets or draft storage; T28 below adds those separately.
 
 When Google authentication completes while the Content API is intentionally
 disabled, Studio shows “Google sign-in completed” and explains that Studio access
 is not enabled. This does not grant a role or expose the shell. A real Worker
 connection failure or denied role remains a separate failure state.
+
+## Account-isolated dataset and first sync (T28)
+
+With an independently configured API, successful Worker authorization starts a
+paginated `/studio/v1/sync/initial` scan. Only the scoped administrative dataset
+is stored, never the anonymous catalog as an authoring dataset. All pages stage
+in memory; the last page, resume cursor, last-sync timestamp and preserved local
+drafts commit in one IndexedDB transaction. Interrupted scans retain the last
+complete dataset. An expired cursor gets one bounded restart; other failures
+require Retry/Refresh. Refresh verifies the session before the scan and checks
+the same token's UID/role again before promotion. There is no content polling,
+realtime subscription, upload or per-keystroke server write.
+
+Production uses pinned `idb_shim` over native browser IndexedDB, with explicit
+schema upgrades and no native filesystem/SQLite or silent in-memory fallback.
+Namespaces include protocol/scope version, Firebase project, UID and role. An
+account's current-role receipt gates every read/write. Immutable local revisions
+provide compare-and-swap protection against stale tabs. Downgrading Owner to
+Collector changes namespace; old role drafts remain stored but inaccessible to
+the new role. Logout/switch/denial immediately clear rendered content, editors,
+queries and open handles; late responses cannot reactivate them. Revocation
+removes the offline receipt without deleting pending drafts. No tokens, email,
+private image bytes, server credentials or authority-bearing claims are stored
+in the dataset or static caches.
+
+Topics, My Packs and Cards now browse that dataset. A minimal local name editor
+demonstrates durable offline edits without implementing the later Topic/Pack/Card
+administration tickets. **Save locally** creates a draft; **Queue commit** marks
+an unsent local commit and sends nothing. Draft, Unsent commit, Conflict and Synced
+labels are distinct. A changed or removed remote revision marks a retained draft
+as Conflict. The API does not supply authoritative publication revisions, so the
+UI labels publication as unknown rather than equating active content with a
+published revision. Future publishing/sync work can populate the optional
+published-revision field.
+
+Offline reopening requires the same tab's restored Firebase identity, a complete
+previously authorized snapshot, its current-role receipt, and a nonsecret
+session-storage readiness marker. A new account/tab cannot authorize offline.
+Readiness is cleared on known denial/logout and cannot be granted by stored
+bearer data. Blocked marker reads/writes fail closed. The UI explicitly labels
+offline access and local-only edits. Remote revocation cannot be discovered while
+fully offline; reconnect/focus must verify the session before content reappears.
+Storage quota, private-mode restrictions, browser eviction, cleared site data and
+lost session identity can make offline data unavailable. Unsaved editor text
+survives a failed save; success is shown only after the transaction commits.
+Browser storage is not a backup or an encryption boundary against someone with
+access to the same browser profile.
+
+API-configured T26A packages opt into a static offline shell. Its generated worker
+preloads only the exact public build allowlist; API, bearer, query, cross-origin,
+private and `no-store` requests/responses never enter CacheStorage. The worker
+does no runtime cache writes. API-empty live builds remain inert and install no
+worker; packaging automatically unregisters an older Studio shell on rollback to
+that mode. Offline shell installation itself needs one successful online visit
+and enough browser storage. Firebase's SDK/session must also remain available.
+
+See [T28 verification and reproducible browser checks](T28-VERIFICATION.md).

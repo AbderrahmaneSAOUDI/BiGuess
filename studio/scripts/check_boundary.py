@@ -7,7 +7,9 @@ root = Path(__file__).resolve().parents[1]
 allowed = {'package:flutter/', 'package:flutter_web_plugins/', 'package:flutter_svg/',
            'package:firebase_core/', 'package:firebase_auth/', 'package:http/',
            'dart:async', 'dart:convert', 'app/', '../app/', '../presentation/',
-           '../auth/', 'auth/', 'studio_', 'presentation/'}
+           '../auth/', 'auth/', 'studio_', 'presentation/', '../data/', 'data/',
+           'dataset_', 'indexed_db_', 'network_', 'offline_access_',
+           'dart:js_interop', 'package:idb_shim/', 'package:web/'}
 for path in (root / 'lib').rglob('*.dart'):
     source = path.read_text()
     for imported in re.findall(r"(?:import|export) ['\"]([^'\"]+)", source):
@@ -19,7 +21,8 @@ for platform in ('android', 'ios', 'linux', 'macos', 'windows'):
 pubspec = (root / 'pubspec.yaml').read_text()
 section = pubspec.split('dependencies:\n', 1)[1].split('dev_dependencies:', 1)[0]
 assert set(re.findall(r'^  ([a-z_]+):', section, re.M)) == {
-    'flutter', 'flutter_web_plugins', 'flutter_svg', 'firebase_core', 'firebase_auth', 'http'}
+    'flutter', 'flutter_web_plugins', 'flutter_svg', 'firebase_core', 'firebase_auth', 'http',
+    'idb_shim', 'web'}
 build = root / 'build/web'
 assert (build / 'main.dart.js').is_file(), 'Build Studio first'
 worker = build / 'flutter_service_worker.js'

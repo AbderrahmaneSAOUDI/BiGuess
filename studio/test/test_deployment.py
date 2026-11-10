@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import sys
+import subprocess
 import unittest
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/prepare_deployment.py'
@@ -46,6 +47,14 @@ class PackagingTests(unittest.TestCase):
         self.assertIn('/releases/*\n  Cache-Control: public, max-age=31536000, immutable', headers)
         self.assertIn('/release.json\n  Cache-Control: public, max-age=0, must-revalidate', headers)
         self.assertIn("connect-src 'self'", headers)
+        self.assertFalse((self.output / 'studio-shell-worker.js').exists())
+        self.assertNotIn('studio-shell-register', (self.output / 'index.html').read_text())
+        cleanup = self.output / 'studio-shell-cleanup.js'
+        self.assertTrue(cleanup.is_file())
+        self.assertIn('src="/studio-shell-cleanup.js"', (self.output / 'index.html').read_text())
+        result = subprocess.run(['node', str(SCRIPT.parent / 'static_shell_test.cjs'), str(cleanup), 'cleanup'],
+                                check=True, text=True, capture_output=True)
+        self.assertIn('only own worker/static cache removed', result.stdout)
 
 
     def test_auth_csp_is_precise_and_server_secrets_are_rejected(self):
@@ -77,6 +86,44 @@ class PackagingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             packaging.prepare(self.source, self.root / 'bad-pages', self.commit, config)
         self.assertFalse((self.root / 'bad-pages').exists())
+
+    def test_offline_shell_opt_in_has_exact_public_allowlist_and_never_caches_private_traffic(self):
+        config = self.root / 'public.json'
+        config.write_text(json.dumps({
+            'STUDIO_FIREBASE_API_KEY': 'public-client-key',
+            'STUDIO_FIREBASE_APP_ID': 'app',
+            'STUDIO_FIREBASE_PROJECT_ID': 'project',
+            'STUDIO_FIREBASE_AUTH_DOMAIN': 'project.firebaseapp.com',
+            'STUDIO_FIREBASE_MESSAGING_SENDER_ID': '123',
+            'STUDIO_API_BASE_URL': 'https://private-api.example.com',
+        }))
+        packaging.prepare(self.source, self.output, self.commit, config)
+        worker = self.output / 'studio-shell-worker.js'
+        self.assertTrue(worker.is_file())
+        self.assertIn('src="/studio-shell-register.js"', (self.output / 'index.html').read_text())
+        source = worker.read_text()
+        self.assertIn('biguess-studio-shell-' + self.commit, source)
+        manifest = json.loads(source.split('const STATIC = new Set(', 1)[1].split(');', 1)[0])
+        self.assertEqual(set(manifest), {'/index.html', '/studio-shell-register.js',
+            f'/releases/{self.commit}/main.dart.js', f'/releases/{self.commit}/flutter_bootstrap.js',
+            f'/releases/{self.commit}/assets/test.svg'})
+        self.assertNotIn('private-api.example.com', source)
+        result = subprocess.run(['node', str(SCRIPT.parent / 'static_shell_test.cjs'), str(worker)],
+                                check=True, text=True, capture_output=True)
+        self.assertIn('private/auth/API/query traffic never intercepted or cached', result.stdout)
+
+    def test_auth_only_release_keeps_service_workers_disabled(self):
+        config = self.root / 'public.json'
+        config.write_text(json.dumps({
+            'STUDIO_FIREBASE_API_KEY': 'public-client-key',
+            'STUDIO_FIREBASE_APP_ID': 'app',
+            'STUDIO_FIREBASE_PROJECT_ID': 'project',
+            'STUDIO_FIREBASE_AUTH_DOMAIN': 'project.firebaseapp.com',
+            'STUDIO_FIREBASE_MESSAGING_SENDER_ID': '123',
+            'STUDIO_API_BASE_URL': '',
+        }))
+        packaging.prepare(self.source, self.output, self.commit, config)
+        self.assertFalse((self.output / 'studio-shell-worker.js').exists())
 
     def test_invalid_commit_does_not_create_output(self):
         for sha in ('main', '../escape', 'a' * 7, 'x' * 40):

@@ -77,6 +77,19 @@ jobs:
           "$RUNNER_TEMP/studio-browser/node_modules/.bin/playwright" install --with-deps chromium
       - name: Verify the actual deployment artifact in desktop and mobile browsers
         run: NODE_PATH="$RUNNER_TEMP/studio-browser/node_modules" STUDIO_WEB_ROOT=build/pages node scripts/browser_smoke.cjs
+      - name: Verify browser storage transactions and schema upgrades
+        run: |
+          export NODE_PATH="$RUNNER_TEMP/studio-browser/node_modules"
+          export CHROME_EXECUTABLE="$(node -e 'process.stdout.write(require("playwright").chromium.executablePath())')"
+          flutter test --platform chrome test/dataset_store_test.dart
+          node scripts/static_shell_browser.cjs --fixture
+      - name: Build isolated dataset browser fixture
+        run: flutter build web --release --no-web-resources-cdn --pwa-strategy=none --target test/browser_dataset_app.dart --output build/dataset-web
+      - name: Verify dataset reload, offline edits and account transitions
+        run: |
+          export NODE_PATH="$RUNNER_TEMP/studio-browser/node_modules"
+          export CHROME_EXECUTABLE="$(node -e 'process.stdout.write(require("playwright").chromium.executablePath())')"
+          node scripts/dataset_browser.cjs
       - uses: actions/upload-artifact@v4
         with:
           name: studio-web-${{ github.sha }}
