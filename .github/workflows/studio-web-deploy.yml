@@ -90,6 +90,8 @@ jobs:
           export NODE_PATH="$RUNNER_TEMP/studio-browser/node_modules"
           export CHROME_EXECUTABLE="$(node -e 'process.stdout.write(require("playwright").chromium.executablePath())')"
           node scripts/dataset_browser.cjs
+      - name: Verify bounded browser image preparation
+        run: NODE_PATH="$RUNNER_TEMP/studio-browser/node_modules" node scripts/image_preparation_browser.cjs
       - uses: actions/upload-artifact@v4
         with:
           name: studio-web-${{ github.sha }}

@@ -306,12 +306,12 @@ an existing eligible Pack and Topic; unsynced/deleted/restoring/conflicting
 parents are unavailable. Pending Card changes block destructive parent changes.
 Account or role changes close private review/editor dialogs and clear inputs.
 
-The browser file picker accepts one JPEG/PNG/WebP candidate up to 5 MiB, checks
-its MIME/signature and previews local bytes. A filename suggests the name only
+The browser file picker accepts one JPEG/PNG/WebP candidate and uses the T32
+preparation pipeline below before previewing local bytes. A filename suggests the name only
 when the name field is empty; replacing an image preserves an entered name and
 the Card ID. Cancelled or failed selection retains the previous image. These
-are selection guards, not full image decoding/normalization or publication
-validation. Existing server references remain readonly; their private bytes are
+include local decoding/normalization; publication validation is separate.
+Existing server references remain readonly; their private bytes are
 not fetched for preview by this ticket.
 
 Saving persists the candidate attachment separately from the four canonical
@@ -319,9 +319,46 @@ product fields in the account's IndexedDB draft. Reopening offline restores its
 name, difficulty, original ID and image preview if site storage survives.
 Queue Card commit explicitly persists an unsent local intent. A selected image
 has no fabricated remote reference and cannot become an upload-ready metadata
-operation until the separate T32/T32A normalization and authenticated ingestion
-flow supplies a valid Pack-bound image reference. No server mutation occurs.
+operation until T32A authenticated ingestion supplies a valid Pack-bound image
+reference. No server mutation occurs.
 Uncommitted/replaced images and hidden/deleted/conflicting Cards do not make a
 Pack playable. Quota failures retain form inputs and the prior saved snapshot.
 Legacy T28 name drafts remain compatible; matching readonly metadata is stripped
 when queueing. See [T31 verification](T31-VERIFICATION.md).
+
+## Browser image preparation (T32)
+
+The Card picker and **Cards → Prepare images** use a local JavaScript Worker
+with `createImageBitmap`, `OffscreenCanvas` and Web Crypto. JPEG, PNG and still
+WebP containers are checked before decode, resized without upscaling to a
+maximum 1024-pixel edge, and redrawn into a fresh canvas to discard source
+EXIF/XMP/text metadata. Encoding uses WebP quality 0.84 where available, otherwise
+PNG with a visible warning; transparency is preserved. Output container, decoded
+dimensions and SHA-256 are validated before the Card candidate is persisted.
+Candidate names use NFC normalization, strip paths/control/bidi characters,
+replace underscores/hyphens and keep an existing typed Card name.
+
+Safety limits are 20 MiB per source, 16 megapixels before decode, 5 MiB per output
+and 500 selected files per review. These are resource bounds. Around 50 KiB per
+image and 10 MiB per Pack are advisory quality targets and do not reject valid
+images. Each worker has a 30-second timeout. Cancellation terminates the active
+worker; closing the dialog or losing account scope also clears private previews.
+Unsupported formats/animation, corrupted containers, missing browser APIs and
+memory/quota failures produce actionable errors without replacing prior images.
+
+Batch review processes one lazy File handle at a time and retains summaries,
+normalized hashes and one preview. Equal normalized bytes are identified as
+duplicates even when filenames differ; Card editing also warns about matching
+local candidates in the same Pack. Hashes identify encoded content, so results
+from different browser encoders are not guaranteed to have the same hash.
+Batch review does not create Cards or retain all prepared bytes. Save an image
+through its Card editor; bulk Card import remains T33. Draft attachments keep
+preparation details separate from canonical game fields and remain recoverable
+offline subject to browser storage limits.
+
+Browsers without Worker/OffscreenCanvas/decode/Web Crypto support are rejected
+with an explanation; there is no synchronous main-thread decoder fallback.
+Chromium is exercised by the automated acceptance suite; other browser engines
+still need live validation. T32A must independently revalidate images and scope
+before ingestion. No image upload or backend activation is added here. See
+[T32 verification](T32-VERIFICATION.md) for results and reproduction commands.

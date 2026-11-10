@@ -57,6 +57,18 @@ class PackagingTests(unittest.TestCase):
         self.assertIn('only own worker/static cache removed', result.stdout)
 
 
+    def test_image_preparation_scripts_share_immutable_release(self):
+        html = (self.source / 'index.html').read_text()
+        (self.source / 'index.html').write_text(html.replace('<script src="flutter_bootstrap.js">', '<script src="image_preparation.js"></script><script src="flutter_bootstrap.js">'))
+        (self.source / 'image_preparation.js').write_text('const workerUrl = new URL("image_preparation_worker.js", document.currentScript.src);')
+        (self.source / 'image_preparation_worker.js').write_text('/* reviewed local image worker */')
+        packaging.prepare(self.source, self.output, self.commit)
+        prefix = f'/releases/{self.commit}/'
+        self.assertIn(f'src="{prefix}image_preparation.js"', (self.output / 'index.html').read_text())
+        self.assertTrue((self.output / prefix.lstrip('/') / 'image_preparation.js').is_file())
+        self.assertTrue((self.output / prefix.lstrip('/') / 'image_preparation_worker.js').is_file())
+        self.assertFalse((self.output / 'image_preparation_worker.js').exists())
+
     def test_auth_csp_is_precise_and_server_secrets_are_rejected(self):
         config = self.root / 'public.json'
         config.write_text(json.dumps({

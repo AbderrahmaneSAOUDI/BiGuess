@@ -29,6 +29,8 @@ class _CardDraftDialogState extends State<CardDraftDialog> {
   late final String? _scope;
   late int _difficulty = widget.card?.difficulty ?? 1;
   late CardImage? _image = widget.card?.localImage;
+  ImagePreparationCancellation? _preparationCancellation;
+  ImagePreparationProgress? _preparationProgress;
   bool _closed = false;
   bool _saving = false;
   bool _picking = false;
@@ -43,6 +45,7 @@ class _CardDraftDialogState extends State<CardDraftDialog> {
   void _changed() {
     if (_closed || _scope == widget.controller.scope?.namespace) return;
     _closed = true;
+    _preparationCancellation?.cancel();
     _name.clear();
     _image = null;
     if (mounted) {
@@ -56,33 +59,67 @@ class _CardDraftDialogState extends State<CardDraftDialog> {
   @override
   void dispose() {
     widget.controller.removeListener(_changed);
+    _preparationCancellation?.cancel();
     _name.dispose();
     _image = null;
     super.dispose();
   }
 
+  void _cancelImagePreparation() {
+    _preparationCancellation?.cancel();
+    if (mounted && !_closed) {
+      setState(() {
+        _picking = false;
+        _preparationProgress = null;
+        _error =
+            'Image preparation cancelled. Your previous image is retained.';
+      });
+    }
+  }
+
   Future<void> _pick() async {
+    final cancellation = ImagePreparationCancellation();
+    _preparationCancellation = cancellation;
+    _preparationProgress = null;
     setState(() {
       _picking = true;
       _error = null;
     });
     try {
-      final image = await (widget.pickImage ?? pickCardImage)();
-      if (!mounted || _closed) return;
+      final image = widget.pickImage != null
+          ? await widget.pickImage!()
+          : await pickCardImage(
+              cancellation: cancellation,
+              onProgress: (progress) {
+                if (mounted && !_closed && !cancellation.isCancelled) {
+                  setState(() => _preparationProgress = progress);
+                }
+              },
+            );
+      if (!mounted || _closed || cancellation.isCancelled) return;
       setState(() {
         if (image != null) {
           _image = image;
           if (_name.text.trim().isEmpty) _name.text = image.suggestedName;
         }
       });
-    } catch (_) {
-      if (mounted && !_closed) {
+    } catch (error) {
+      if (mounted && !_closed && !cancellation.isCancelled) {
         setState(
-          () => _error = 'Could not select that image. Choose a JPEG, PNG or WebP image up to 5 MiB. Your previous image is retained.',
+          () => _error = error is ImagePreparationFailure
+              ? '${error.message} Your previous image is retained.'
+              : 'Could not prepare that image. Choose a JPEG, PNG or WebP image within the browser limits. Your previous image is retained.',
         );
       }
     } finally {
-      if (mounted && !_closed) setState(() => _picking = false);
+      if (mounted &&
+          !_closed &&
+          identical(_preparationCancellation, cancellation)) {
+        setState(() {
+          _picking = false;
+          _preparationProgress = null;
+        });
+      }
     }
   }
 
@@ -208,12 +245,44 @@ class _CardDraftDialogState extends State<CardDraftDialog> {
                 icon: const Icon(Icons.image_outlined),
                 label: Text(
                   _picking
-                      ? 'Selecting image…'
+                      ? 'Preparing image…'
                       : _image != null || widget.card?.imageReference != null
                       ? 'Replace image'
                       : 'Select image',
                 ),
               ),
+              if (_picking) ...[
+                Semantics(
+                  liveRegion: true,
+                  child: Text(
+                    _preparationProgress?.stage ?? 'Preparing image…',
+                  ),
+                ),
+                LinearProgressIndicator(
+                  value: _preparationProgress?.fraction.clamp(0, 1) ?? 0,
+                ),
+                TextButton(
+                  onPressed: _cancelImagePreparation,
+                  child: const Text('Cancel image preparation'),
+                ),
+              ],
+              if (_image?.preparation != null) ...[
+                Text(
+                  '${_image!.preparation!.width} × ${_image!.preparation!.height} · ${_image!.mimeType}',
+                ),
+                for (final warning in _image!.preparation!.warnings)
+                  Text(warning),
+                if (widget.controller.cards.any(
+                  (card) =>
+                      card.id != widget.card?.id &&
+                      card.packId == widget.packId &&
+                      card.localImage?.preparation?.sha256 ==
+                          _image!.preparation!.sha256,
+                ))
+                  const Text(
+                    'This prepared image matches another local Card image in this Pack.',
+                  ),
+              ],
               const SizedBox(height: 12),
               const Text(
                 'Save locally, review the Card, then queue a commit explicitly. Nothing is uploaded or published here.',

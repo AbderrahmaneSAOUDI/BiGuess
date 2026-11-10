@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const http = require('node:http');
+const crypto = require('node:crypto');
 const {spawnSync} = require('node:child_process');
 const source = path.resolve(process.env.STUDIO_DATASET_WEB_ROOT || 'build/dataset-web');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(),'biguess-dataset-browser-'));
@@ -374,7 +375,8 @@ const server = http.createServer((req,res) => {
       await page.getByRole('button',{name:button,exact:true}).click();
       await (await selection).setFiles({name:filename,mimeType:'image/png',buffer:png});
       await preview().waitFor();
-      await content(filename).waitFor();
+      // The pipeline may normalize the output filename and extension. The
+      // persisted candidate below verifies its final format and metadata.
     };
     const chooseCardPack = async (name,id) => {
       await page.getByRole('button',{name:/^Pack(?:\s|$)/}).or(page.getByRole('combobox',{name:/^Pack(?:\s|$)/})).last().click();
@@ -391,7 +393,8 @@ const server = http.createServer((req,res) => {
           request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
         });
         const snapshot = values.map(value => JSON.parse(value)).find(value => value.scope.uid === uid);
-        return snapshot?.drafts.find(draft => draft.resourceType === 'card' && draft.value.name === name);
+        return name == null ? snapshot?.drafts.filter(draft => draft.resourceType === 'card')
+          : snapshot?.drafts.find(draft => draft.resourceType === 'card' && draft.value.name === name);
       } finally { db.close(); }
     },{uid,name});
     // Card review is reachable within the scoped Pack; it never requires Topic
@@ -421,9 +424,31 @@ const server = http.createServer((req,res) => {
     const originalCard = await storedCard('b','B browser identity');
     assert.equal(originalCard.value.packId,'pack-b');
     assert.equal(originalCard.value.difficulty,3);
-    assert.equal(originalCard.localImage.filename,'Ada_Lovelace.png');
+    assert.equal(originalCard.localImage.filename,'Ada Lovelace.webp');
+    assert.equal(originalCard.localImage.preparation.width,2);
+    assert.equal(originalCard.localImage.preparation.height,2);
+    assert.equal(originalCard.localImage.preparation.sha256,crypto.createHash('sha256').update(Buffer.from(originalCard.localImage.base64,'base64')).digest('hex'),
+      'the persisted preparation hash describes normalized output bytes');
+    assert.equal(originalCard.localImage.mimeType,'image/webp','Chromium supports metadata-free WebP output');
     assert.equal(originalCard.value.createdByUid,undefined);
     assert.equal(originalCard.value.ownerUid,undefined);
+    // The batch preparation panel reviews normalized candidates serially. It
+    // detects duplicates and corrupt inputs without creating extra Card drafts.
+    await page.getByRole('button',{name:'Prepare images',exact:true}).click();
+    const batchSelection = page.waitForEvent('filechooser');
+    await page.getByRole('button',{name:'Select images',exact:true}).click();
+    await (await batchSelection).setFiles([
+      {name:'First_pixel.png',mimeType:'image/png',buffer:png},
+      {name:'Renamed_duplicate.png',mimeType:'image/png',buffer:png},
+      {name:'Broken_input.png',mimeType:'image/png',buffer:Buffer.from([0,1,2,3])},
+    ]);
+    await content('1 prepared · 1 duplicates · 1 failed').waitFor();
+    await page.screenshot({path:'/tmp/t32-preparation-summary.png'});
+    await page.getByRole('button',{name:'Close image preparation',exact:true}).click();
+    const afterPreparation = await storedCard('b','B browser identity');
+    assert.equal((await storedCard('b',null)).length,1,'batch preparation must not create extra Cards');
+    assert.equal(afterPreparation.resourceId,originalCard.resourceId);
+    assert.equal(afterPreparation.localImage.preparation.sha256,originalCard.localImage.preparation.sha256);
     // Replace locally while offline and retain the generated canonical Card ID.
     await context.setOffline(true);
     await status(/Offline workspace — local edits only/).waitFor();
@@ -444,7 +469,9 @@ const server = http.createServer((req,res) => {
     await content('B browser identity').waitFor();
     const replacementCard = await storedCard('b','B browser identity');
     assert.equal(replacementCard.resourceId,originalCard.resourceId,'image replacement retains the Card ID');
-    assert.equal(replacementCard.localImage.filename,'Replacement_identity.png');
+    assert.equal(replacementCard.localImage.filename,'Replacement identity.webp');
+    assert.equal(replacementCard.localImage.preparation.sha256,originalCard.localImage.preparation.sha256,
+      'equal input pixels deduplicate across different candidate filenames');
     assert.equal(replacementCard.status,'unsent');
     for (const action of ['Delete Card','Restore Card','Permanently delete Card']) {
       assert.equal(await page.getByRole('button',{name:action,exact:true}).count(),0);
@@ -549,7 +576,7 @@ const server = http.createServer((req,res) => {
     assert.deepEqual(errors,[],'no browser runtime errors');
     await page.screenshot({path:'/tmp/t28-dataset-browser-final.png'});
     await context.close();
-    console.log(`T28/T29/T30/T31 dataset Chromium PASS: Card file selection/preview/name suggestion, difficulty, offline image replacement with stable ID and durable queue, isolated collectors, Owner lifecycle confirmations and live-denial cleanup; Owner global/legacy Pack view, stale edit, confirmed delete/restore/purge and durable hide; Owner Topic create/rename/hide/delete/restore/search and queued reload, Collector minimal taxonomy and independent mobile Pack classification;  scoped initial paging, local draft/queue reload, interrupted sync rollback, offline edits/reload, revoked reconnect, first-offline denial, B isolation and sign-out cleanup; ${requests.length} private GETs, zero uploads.`);
+    console.log(`T28/T29/T30/T31/T32 dataset Chromium PASS: Normalized Card picker output, persisted dimensions/content hash and content deduplication; Card file selection/preview/name suggestion, difficulty, offline image replacement with stable ID and durable queue, isolated collectors, Owner lifecycle confirmations and live-denial cleanup; Owner global/legacy Pack view, stale edit, confirmed delete/restore/purge and durable hide; Owner Topic create/rename/hide/delete/restore/search and queued reload, Collector minimal taxonomy and independent mobile Pack classification;  scoped initial paging, local draft/queue reload, interrupted sync rollback, offline edits/reload, revoked reconnect, first-offline denial, B isolation and sign-out cleanup; ${requests.length} private GETs, zero uploads.`);
   } catch (error) {
     if (diagnosticPage && !diagnosticPage.isClosed()) {
       console.error('Dataset browser diagnostics:',JSON.stringify({errors,requests,returned,body:await diagnosticPage.locator('body').innerText()}));

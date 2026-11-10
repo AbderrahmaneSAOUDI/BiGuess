@@ -320,7 +320,7 @@ void main() {
       await tester.tap(find.text('Replace image'));
       await tester.pumpAndSettle();
       expect(
-        find.textContaining('Could not select that image'),
+        find.textContaining('Could not prepare that image'),
         findsOneWidget,
       );
       await tester.enterText(

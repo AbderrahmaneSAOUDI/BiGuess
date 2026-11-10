@@ -7,6 +7,7 @@ import '../data/dataset_controller.dart';
 import '../data/studio_dataset.dart';
 import 'card_draft_dialog.dart';
 import 'card_messages.dart';
+import 'image_preparation_page.dart';
 
 class CardsPage extends StatefulWidget {
   const CardsPage({super.key, required this.controller, this.initialPackId});
@@ -130,6 +131,15 @@ class _CardsPageState extends State<CardsPage> {
                       ),
                     ),
               child: const Text('New Card'),
+            ),
+          ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton(
+              onPressed: !eligible
+                  ? null
+                  : () => showImagePreparation(context, controller, _packId!),
+              child: const Text('Prepare images'),
             ),
           ),
           if (!eligible)

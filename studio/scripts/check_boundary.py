@@ -9,7 +9,7 @@ allowed = {'package:flutter/', 'package:flutter_web_plugins/', 'package:flutter_
            'dart:async', 'dart:convert', 'app/', '../app/', '../presentation/',
            '../auth/', 'auth/', 'studio_', 'presentation/', '../data/', 'data/',
            'dataset_', 'indexed_db_', 'network_', 'offline_access_',
-           'topic_', 'topics_', 'pack_', 'packs_', 'card_', 'cards_', 'dart:typed_data', 'dart:math',
+           'topic_', 'topics_', 'pack_', 'packs_', 'card_', 'cards_', 'image_preparation', 'dart:typed_data', 'dart:math',
            'dart:js_interop', 'package:idb_shim/', 'package:web/'}
 for path in (root / 'lib').rglob('*.dart'):
     source = path.read_text()

@@ -112,6 +112,7 @@ def prepare(source: Path, destination: Path, commit: str, public_config: Path | 
                          'fontFallbackBaseUrl': prefix + 'font-fallbacks/'})
     bootstrap = bootstrap.replace(marker, f'const studioConfig = {renderer_config};', 1)
     html = html.replace('src="flutter_bootstrap.js"', f'src="{prefix}flutter_bootstrap.js"')
+    html = html.replace('src="image_preparation.js"', f'src="{prefix}image_preparation.js"')
     html = html.replace('href="favicon.webp"', f'href="{prefix}favicon.webp"')
     html = html.replace('</head>', f'<meta name="studio-commit" content="{commit}">\n</head>')
     release = destination / 'releases' / commit
