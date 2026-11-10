@@ -1,4 +1,5 @@
 import type { Env } from './env';
+import { captureChange } from './studio-scope';
 
 export const immutable = 'public, max-age=31536000, immutable';
 export const hash = async (bytes: Uint8Array): Promise<string> =>
@@ -197,10 +198,20 @@ async function administrativeProjection(env: Env, manifest: Manifest, s: Stateme
   const statements = [env.DB.prepare('INSERT INTO publication_commits VALUES (?, ?, ?)').bind(s.packId, s.revision, generation)];
   if (!topic) statements.push(env.DB.prepare('INSERT INTO studio_entities VALUES (?, ?, NULL, ?, ?, ?)')
     .bind('topic', s.topicId, canonical({ name: manifest.topic.name }), 'active', 1));
-  const store = (entity: AdministrativeEntity, existed: boolean) => statements.push(env.DB.prepare(existed
+  const changed: {kind: string; id: string}[] = [];
+  if (!topic) {
+    statements.push(env.DB.prepare("INSERT INTO studio_creators VALUES ('topic',?,NULL,NULL,'legacy')").bind(s.topicId));
+    changed.push({kind:'topic',id:s.topicId});
+  }
+  const store = (entity: AdministrativeEntity, existed: boolean) => {
+    statements.push(env.DB.prepare(existed
     ? 'UPDATE studio_entities SET parent_id = ?3, value = ?4, state = ?5, revision = ?6 WHERE resource_type = ?1 AND id = ?2'
     : 'INSERT INTO studio_entities VALUES (?, ?, ?, ?, ?, ?)')
     .bind(entity.resource_type, entity.id, entity.parent_id, entity.value, entity.state, entity.revision));
+    if (!existed) statements.push(env.DB.prepare("INSERT INTO studio_creators VALUES (?, ?, NULL, NULL, 'legacy')")
+      .bind(entity.resource_type,entity.id));
+    changed.push({kind:entity.resource_type,id:entity.id});
+  };
   store({ resource_type: 'pack', id: s.packId, parent_id: s.topicId,
     value: canonical({ name: manifest.pack.name, topicId: s.topicId }), state: pack?.state ?? 'active', revision: s.revision }, !!pack);
   const included = new Set(manifest.cards.map(c => c.id));
@@ -210,6 +221,10 @@ async function administrativeProjection(env: Env, manifest: Manifest, s: Stateme
   for (const card of cards.values()) if (!included.has(card.id) && card.parent_id === s.packId && card.state !== 'deleted' && card.state !== 'purged') {
     store({ ...card, state: 'hidden', revision: s.revision }, existed.has(card.id));
   }
+  for (const card of manifest.cards) statements.push(env.DB.prepare(
+    'INSERT OR IGNORE INTO studio_pack_images VALUES (?, ?, NULL, ?)')
+    .bind(s.packId,card.imageReference,new Date().toISOString()));
+  for (const e of changed) statements.push(captureChange(env,e.kind,e.id));
   return { statements, resumePublished: !!dirty && pack?.state === 'active'
     && (reads[4].results[0] as { resume_published: number } | undefined)?.resume_published === 1 };
 }

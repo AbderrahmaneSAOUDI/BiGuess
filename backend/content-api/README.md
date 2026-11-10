@@ -1,4 +1,4 @@
-# Content API (T20–T25)
+# Content API (T20–T25, T27B)
 
 Isolated TypeScript Cloudflare Worker, D1 migrations and private R2 objects.
 `../biguess-api/` remains the separate legacy game-record API. No Flutter client,
@@ -234,8 +234,8 @@ before separately approving any production backend release.
 
 | Operation | Owner Admin | Collector |
 | --- | --- | --- |
-| Read Topics/Packs/Cards and own session | Yes | Yes |
-| Create/edit/hide Packs and Cards | Yes | Yes |
+| Read Topics/Packs/Cards and own session | Global | Own Packs/Cards; minimal taxonomy |
+| Create/edit/hide Packs and Cards | Global | Own Packs/Cards |
 | Manage Topics, initial publishing, Studio users/roles | Yes | No |
 | Delete (soft or permanent) or restore any resource | Yes | No |
 
@@ -247,8 +247,9 @@ administrative lifecycle operations now share the versioned atomic
 [Studio mutation implementation](STUDIO.md). `POST /studio/v1/batches` and
 `/content/v1/studio/batches` validate and authorize every operation before writing.
 Item mutation routes accept a single matching operation in the same StudioBatch
-envelope. Studio content reads, user management and publishing still return 501;
-these are separate roadmap work. Hide permission never implies deletion.
+envelope. Canonical administrative reads, pagination and scoped change feeds are
+implemented in [T27B](STUDIO.md); user management and publishing still return 501.
+Hide permission never implies deletion.
 
 `npm test` exercises the real bundled Worker with locally signed RSA tokens and
 intercepted Google JWKS discovery. There is no production test-key/auth-bypass

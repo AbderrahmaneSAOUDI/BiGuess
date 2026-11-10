@@ -110,7 +110,10 @@ test('only server allowlist grants roles; claims, headers, body and reused email
 test('Collector may read content and create/edit/hide Packs and Cards; Owner-only operations are forbidden', async t => {
   const request = await setup(t); const jwt = await token();
   for (const resource of ['topics', 'packs', 'cards']) {
-    await expect(await request(`/studio/v1/${resource}`, jwt), 501, 'not_implemented');
+    // No DB is bound in this identity-only suite. Canonical reads reach storage;
+    // a global Card collection is deliberately absent (Cards are Pack-scoped).
+    await expect(await request(`/studio/v1/${resource}`, jwt), resource === 'cards' ? 404 : 503,
+      resource === 'cards' ? 'not_found' : 'internal_error');
     for (const [method, suffix] of [['POST', ''], ['PATCH', '/id'], ['POST', '/id/hide']]) {
       await expect(await request(`/studio/v1/${resource}${suffix}`, jwt, method, { name: 'Example' }),
         resource === 'topics' ? 403 : 422, resource === 'topics' ? 'forbidden' : 'validation_failed');

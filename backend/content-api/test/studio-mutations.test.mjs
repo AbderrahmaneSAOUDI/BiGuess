@@ -49,13 +49,20 @@ async function setup(t) {
   }
   const bucket = await mf.getR2Bucket('CONTENT');
   await bucket.put(imageReference, image, { httpMetadata: { contentType: 'image/webp' } });
-  const send = (body, revision, { actor = 'owner', key = randomUUID(), headers = {},
-    path = '/studio/v1/batches', method = 'POST' } = {}) => mf.dispatchFetch(`https://api.example${path}`, {
+  const send = async (body, revision, { actor = 'owner', key = randomUUID(), headers = {},
+    path = '/studio/v1/batches', method = 'POST' } = {}) => {
+    // Trusted test ingestion grants the one fixture object to the target Pack.
+    // Scope tests separately prove that browser requests cannot create grants.
+    if (body?.aggregate?.resourceType === 'pack') await db.prepare(
+      'INSERT OR IGNORE INTO studio_pack_images VALUES (?, ?, NULL, ?)')
+      .bind(body.aggregate.id,imageReference,new Date().toISOString()).run();
+    return mf.dispatchFetch(`https://api.example${path}`, {
     method, headers: { Authorization: `Bearer ${tokens[actor]}`, 'Content-Type': 'application/json',
       'Idempotency-Key': key, ...(revision === 0 ? { 'If-None-Match': '*' }
         : revision === undefined ? {} : { 'If-Match': `"rev-${revision}"` }), ...headers },
     body: JSON.stringify(body),
-  });
+    });
+  };
   const commit = (resourceType, id, operations, revision, options) => send({ protocolVersion: 1,
     aggregate: { resourceType, id }, operations }, revision, options);
   const row = (resourceType, id) => db.prepare(
@@ -162,12 +169,13 @@ test('strict fields, duplicate IDs, malformed preconditions and invalid images l
     { ...card('c').value, difficulty: 4 }, { ...card('c').value, name: ' Untrimmed ' },
     { ...card('c').value, deleted: true }, { ...card('c').value, role: 'owner_admin' },
     { ...card('c').value, imageReference: 'https://example.test/image.webp' },
-    { ...card('c').value, imageReference: `objects/${'a'.repeat(64)}.webp` },
     { ...card('c').value, packId: 'elsewhere' },
   ]) {
     await failure(await commit('pack', 'pack', [op('card', 'a', 'hide'), op('card', 'c', 'create', value)], 1),
       422, 'validation_failed');
   }
+  await failure(await commit('pack', 'pack', [op('card','c','create',
+    { ...card('c').value, imageReference: `objects/${'a'.repeat(64)}.webp` })],1),404,'not_found');
   await failure(await commit('pack', 'pack', [op('card', 'a', 'hide'), op('card', 'a', 'hide')], 1), 422, 'validation_failed');
   await failure(await commit('pack', 'pack', [op('pack', 'other', 'hide')], 1), 422, 'validation_failed');
   await failure(await commit('pack', 'pack', [op('card', 'a', 'hide')], undefined), 428, 'precondition_required');

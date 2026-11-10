@@ -1,4 +1,57 @@
-# Administrative mutations (T24)
+# Administrative mutations and scoped reads (T24, T27B)
+
+T27B implements the approved [administrative scope contract](../../contracts/studio/v1/README.md).
+Apply additive `0006_studio_scope.sql` with `npm run db:migrate` locally after
+0001–0005. It leaves the six-column entity table, public artifacts, audit and
+tombstones intact. Existing identities, including purged fences, get immutable
+unassigned legacy attribution and remain Owner-only. Reapplying 0006 preserves
+creator evidence, feed history, view versions and the randomly generated cursor
+key. No remote migration or Content Backend deployment is part of this gate.
+
+New Packs belong permanently to the verified creator UID; Cards inherit their
+stored Pack's access. Owner can administer all records. Collectors can read,
+search, create, edit and hide only their own Packs/Cards, and see the minimal
+nondeleted Topic taxonomy. Request creator/owner fields cannot establish scope.
+Missing attribution fails closed. Every batch operation and both idempotency
+replay paths check current scope before returning revisions or saved results.
+Entity, creator, audit, feed, view-version and idempotency writes commit atomically
+under the existing generation guard. Trusted publication preserves existing
+creators and captures administrative changes in the same transaction.
+
+Canonical authenticated GET routes are `/studio/v1/topics`, `/topics/{id}`,
+`/packs`, `/packs/{id}`, `/packs/{id}/cards`, `/cards/{id}`, `/sync/initial`,
+`/sync/changes` and Owner-only `/audit?packId=...`. Paths after the first use the
+same `/studio/v1` prefix. New reads have no `/content/v1/studio` aliases; existing
+session/mutation aliases retain identical authorization. Public anonymous
+catalog, downloads and Pack distribution contracts remain separate.
+
+Read envelopes have `protocolVersion:1,scopeVersion:1`. Collections accept
+`limit=1..100` (default 50) and opaque `cursor`; Packs also accept `topicId,q,state`
+and Pack Cards accept `q,state`. Topic lists accept `state`. Unknown/duplicate
+parameters are rejected. Unicode case-insensitive substring search runs over
+SQL-authorized rows before paging. This currently scans the account's remaining
+matching-kind records in Worker memory; large authoring datasets may require a
+persisted folded-name search projection. No other account's rows are loaded.
+
+Initial sync pages taxonomy and authorized content in type/UTF-8-ID order. Stage
+pages until the last page supplies `resumeCursor`; promote the dataset atomically
+only then. Changes use that cursor with the same limit, return scoped upserts or
+minimal removals, and supply a new resume cursor only at the end of a frozen
+watermark. Deleted ancestors suppress historical upsert data. History is retained
+indefinitely. AES-GCM cursors hide global counters and bind project, UID, live
+role/allowlist entry, endpoint, filters and limit. Continuations expire after
+15 minutes; completed resume cursors persist while history remains available.
+Changes to an initial scan's own view expire it; foreign-only writes do not.
+On `409 cursor_expired`, restart initial staging while retaining the last good
+local dataset. Reauthenticate on every request, including continuation/replay.
+All private responses are `no-store` with exact-origin CORS; they never use 304.
+
+Card reads expose Pack-specific opaque image identifiers, not raw R2 keys or
+download capabilities. Card attachment requires a trusted `studio_pack_images`
+binding before any R2 read. Only operator ingestion establishes those bindings;
+request JSON cannot. Private image/upload routes remain disabled (404); future
+handlers must resolve stored Pack scope and its binding before object access.
+T28 browser storage/session isolation and the upload/publishing UI remain separate.
 
 The Worker implements the frozen [v1 Studio contract](../../contracts/content/v1/README.md#studio-mutations-concurrency-and-authorization).
 Apply `0004_studio.sql` through the existing **local** migration workflow; this

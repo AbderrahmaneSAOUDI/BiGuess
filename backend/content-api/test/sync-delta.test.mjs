@@ -218,7 +218,9 @@ test('image replacements list only new required bytes and multi-revision deltas 
 
 test('hidden or removed Cards are removals without tombstones or unchanged object bytes in the delta', async t => {
   const { publishThrough, publish, commit, action, delta, db, sync, known, request } = await setup(t); await publishThrough(5);
-  await success(await commit('pack', packId, [action('card', hiddenCardId, 'hide')], 5, 'collector'));
+  // Trusted publication imports are unassigned legacy content, hence Owner-only.
+  await error(await commit('pack', packId, [action('card', hiddenCardId, 'hide')], 5, 'collector'), 404, 'not_found');
+  await success(await commit('pack', packId, [action('card', hiddenCardId, 'hide')], 5));
   assert.deepEqual((await syncBody(await sync([known(5)]))).results, [{ packId, status: 'unavailable' }]);
   await success(await publish(6, 5));
   const hidden = await deltaBody(await delta(5, 6));
@@ -263,7 +265,8 @@ test('delta ETags revalidate exact bytes only after visibility and stored-artifa
 
 test('hiding never grants deletion authority and parent visibility applies to revision checks', async t => {
   const { publishThrough, commit, action, sync, known, db } = await setup(t); await publishThrough(1);
-  await success(await commit('pack', packId, [action('pack', packId, 'hide')], 1, 'collector'));
+  await error(await commit('pack', packId, [action('pack', packId, 'hide')], 1, 'collector'), 404, 'not_found');
+  await success(await commit('pack', packId, [action('pack', packId, 'hide')], 1));
   assert.deepEqual((await syncBody(await sync([known()]))).results, [{ packId, status: 'unavailable' }]);
   assert.equal(await db.prepare('SELECT count(*) AS n FROM studio_tombstones').first('n'), 0);
   await db.exec('UPDATE catalog_packs SET published = 1');

@@ -50,7 +50,7 @@ async function setup(t) {
     d1Databases: { DB: 'publication-test' }, r2Buckets: { CONTENT: 'publication-test' } }));
   t.after(() => mf.dispose());
   const db = await mf.getD1Database('DB');
-  for (const file of ['0002_catalog.sql', '0003_publications.sql', '0004_studio.sql', '0005_distribution.sql']) {
+  for (const file of ['0002_catalog.sql', '0003_publications.sql', '0004_studio.sql', '0005_distribution.sql', '0006_studio_scope.sql']) {
     const sql = readFileSync(new URL(`../migrations/${file}`, import.meta.url), 'utf8')
       .split('\n').filter(line => !line.trim().startsWith('--')).join(' ');
     await db.exec(sql);

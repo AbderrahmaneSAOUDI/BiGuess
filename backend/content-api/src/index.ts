@@ -5,6 +5,7 @@ import { download } from './download';
 import { mutate } from './studio-mutations';
 import { sync } from './sync';
 import { studioCors } from './studio-cors';
+import { studioRead } from './studio-reads';
 
 interface Fixture {
   object_key: string;
@@ -41,6 +42,10 @@ export default {
       return studioCors(request, env, async () => {
         try {
           const principal = await authenticate(request, env);
+          if (request.method === 'GET' && !path.startsWith('/content/v1/studio')) {
+            const read = await studioRead(request, env, principal);
+            if (read) return read;
+          }
           if (request.method === 'POST' && studioPath === '/studio/v1/batches') {
             return mutate(request, env, principal);
           }
@@ -48,6 +53,7 @@ export default {
           if (!operation) return studioError(404, 'not_found');
           authorize(principal, operation.resource, operation.action);
           if (operation.resource === 'session') return json(principal);
+          if (operation.action === 'read' && operation.resource !== 'users') return studioError(404, 'not_found');
           if (operation.resource !== 'users' && operation.action !== 'read' && operation.action !== 'publish') {
             return mutate(request, env, principal, { resource: operation.resource, action: operation.action, path: studioPath });
           }

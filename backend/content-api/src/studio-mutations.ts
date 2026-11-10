@@ -1,6 +1,7 @@
 import type { Env } from './env';
 import { authorize, StudioError, type Principal, type Action } from './studio-auth';
 import { hash } from './publication';
+import { checkBatchScope, assertBatchScope, scopeReads, captureChange, resolvePackImage } from './studio-scope';
 
 type Kind = 'topic' | 'pack' | 'card';
 type MutationAction = 'create' | 'update' | 'hide' | 'activate' | 'softDelete' | 'restore' | 'permanentDelete' | 'publish';
@@ -125,9 +126,18 @@ export async function mutate(request: Request, env: Env, principal: Principal, r
     const canonicalRequest = canonical([batch, match, none]);
     const fingerprint = await hash(new TextEncoder().encode(canonicalRequest));
     const retry = async (): Promise<Response | undefined> => {
-      const saved = await env.DB.prepare('SELECT fingerprint, result FROM studio_commits WHERE actor_id = ? AND idempotency_key = ?')
-        .bind(principal.uid, idempotency).first<{ fingerprint: string; result: string }>();
+      await checkBatchScope(env, principal, batch);
+      const saved = await env.DB.prepare('SELECT fingerprint, result, request_json FROM studio_commits WHERE actor_id = ? AND idempotency_key = ?')
+        .bind(principal.uid, idempotency).first<{ fingerprint: string; result: string; request_json: string }>();
       if (saved) {
+        // A formerly privileged actor cannot probe a saved foreign commit with
+        // a new own-aggregate payload, even through a fingerprint conflict.
+        const original = JSON.parse(saved.request_json)[0] as Batch;
+        for (const op of original.operations) {
+          const action = ({ update: 'edit', activate: 'edit', softDelete: 'soft-delete', permanentDelete: 'permanent-delete' } as Record<string, Action>)[op.action] ?? op.action as Action;
+          authorize(principal, `${op.resourceType}s`, action);
+        }
+        await checkBatchScope(env, principal, original, true);
         if (saved.fingerprint !== fingerprint) throw new MutationError(409, 'idempotency_conflict', 'This key was used for a different commit.');
         return response(JSON.parse(saved.result));
       }
@@ -153,11 +163,13 @@ export async function mutate(request: Request, env: Env, principal: Principal, r
           OR id IN (SELECT value FROM json_each(?))))`)
         .bind(aggregate.resourceType, aggregate.id, aggregate.resourceType, aggregate.id, aggregate.resourceType, aggregate.id,
           aggregate.resourceType, aggregate.id, aggregate.id, JSON.stringify(requestedTopics)),
+      ...scopeReads(env,batch),
     ]);
     const generation = (reads[0].results[0] as { generation: number }).generation;
     const entities = new Map((reads[1].results as Entity[]).map(e => [keyOf(e.resource_type, e.id), e]));
     const aggregateKey = keyOf(aggregate.resourceType, aggregate.id);
     const current = entities.get(aggregateKey);
+    assertBatchScope(principal,batch,reads[2].results,reads[3].results);
     if ((current?.revision ?? 0) !== expected) throw new MutationError(412, 'revision_conflict', 'Refresh the aggregate before committing.', current?.revision ?? null);
     if (current?.state === 'purged') throw new MutationError(410, 'deleted', 'This identity was permanently deleted.');
     if (expected === 0 && !batch.operations.some(op => op.resourceType === aggregate.resourceType && op.id === aggregate.id && op.action === 'create')) fail('New aggregates require their create operation.');
@@ -188,6 +200,7 @@ export async function mutate(request: Request, env: Env, principal: Principal, r
       if (op.action === 'permanentDelete' && [...entities.values()].some(e => e.parent_id === op.id
         && e.resource_type === (op.resourceType === 'topic' ? 'pack' : op.resourceType === 'pack' ? 'card' : '') && e.state !== 'purged')) fail('Purge children before their parent.');
       if (op.value?.imageReference && !verifiedImages.has(op.value.imageReference)) {
+        op.value.imageReference = await resolvePackImage(env, aggregate.id, op.value.imageReference);
         await image(env, op.value.imageReference);
         verifiedImages.add(op.value.imageReference);
       }
@@ -226,6 +239,8 @@ export async function mutate(request: Request, env: Env, principal: Principal, r
       statements.push(env.DB.prepare(isCreate ? 'INSERT INTO studio_entities VALUES (?, ?, ?, ?, ?, ?)' :
         `UPDATE studio_entities SET parent_id = ?3, value = ?4, state = ?5, revision = ?6 WHERE resource_type = ?1 AND id = ?2`)
         .bind(e.resource_type, e.id, e.parent_id, e.value, e.state, e.revision));
+      if (isCreate) statements.push(env.DB.prepare('INSERT INTO studio_creators VALUES (?, ?, ?, ?, ?)')
+        .bind(e.resource_type,e.id,principal.uid,committedAt,'authenticated'));
       statements.push(env.DB.prepare('INSERT INTO studio_audit VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
         .bind(batchId, principal.uid, principal.role, e.resource_type, e.id, action, e.revision, committedAt));
       if (action === 'softDelete') statements.push(env.DB.prepare('INSERT INTO studio_tombstones VALUES (?, ?, ?, ?)')
@@ -252,12 +267,14 @@ export async function mutate(request: Request, env: Env, principal: Principal, r
             .bind(Number(e.state === 'deleted' || e.state === 'purged'), e.id));
       }
     }
+    for (const { entity: e } of changed.values()) statements.push(captureChange(env,e.resource_type,e.id));
     try { await env.DB.batch(statements); }
     catch (error) {
       // A racing identical request may already have committed. Return its saved
       // result before checking any revision, exactly like a later retry.
       const raced = await retry(); if (raced) return raced;
       if (String(error).includes('studio_conflict')) {
+        await checkBatchScope(env, principal, batch);
         const latest = await env.DB.prepare('SELECT revision FROM studio_entities WHERE resource_type = ? AND id = ?')
           .bind(aggregate.resourceType, aggregate.id).first<{ revision: number }>();
         throw new MutationError(412, 'revision_conflict', 'Content changed during validation. Refresh and retry.', latest?.revision ?? null);
