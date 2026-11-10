@@ -24,15 +24,16 @@ const requests = [];
 const returned = [];
 let revoked = false;
 let interrupt = false;
+let packRevision = 1;
 const topic = {resourceType:'topic',id:'taxonomy',name:'Shared taxonomy',state:'active',revision:1};
 const hiddenTopic = {resourceType:'topic',id:'taxonomy-hidden',name:'Hidden classification',state:'hidden',revision:2};
 const seasonalTopic = {resourceType:'topic',id:'taxonomy-seasonal',name:'Seasonal Topic',state:'active',revision:1};
 const retiredTopic = {resourceType:'topic',id:'taxonomy-retire',name:'Retire Topic',state:'active',revision:1};
 const deletedTopic = {resourceType:'topic',id:'taxonomy-deleted',name:'Deleted Topic',state:'deleted',revision:3};
 const sharedTaxonomy = [topic,hiddenTopic,seasonalTopic,retiredTopic].sort((a,b) => a.id.localeCompare(b.id));
-const ownerProjection = record => ({...record,createdByUid:record.resourceType === 'topic' ? 'fixture-private-author' : record.id.endsWith('-b') ? 'b' : 'a',createdAt:'2026-11-10T00:00:00.000Z'});
+const ownerProjection = record => ({...record,createdByUid:record.id === 'pack-legacy' ? null : record.resourceType === 'topic' ? 'fixture-private-author' : record.id.endsWith('-b') ? 'b' : 'a',createdAt:'2026-11-10T00:00:00.000Z'});
 function pack(uid, partial = false) {return {resourceType:'pack',id:`pack-${uid}`,topicId:'taxonomy',
-  name:partial ? `${uid.toUpperCase()} partial staging` : `${uid.toUpperCase()} private pack`,state:'active',revision:1};}
+  name:partial ? `${uid.toUpperCase()} partial staging` : `${uid.toUpperCase()} private pack`,state:'active',revision:packRevision};}
 function card(uid) {return {resourceType:'card',id:`card-${uid}`,packId:`pack-${uid}`,name:`${uid.toUpperCase()} private card`,
   imageReference:`opaque-${uid}`,difficulty:1,state:'active',revision:1};}
 const server = http.createServer((req,res) => {
@@ -50,7 +51,9 @@ const server = http.createServer((req,res) => {
       if (cursor && cursor !== `${uid}-page2`) return res.writeHead(409).end(JSON.stringify({error:{code:'cursor_expired'}}));
       if (cursor && interrupt) return res.writeHead(503).end(JSON.stringify({error:{code:'storage-unavailable'}}));
       const items = uid === 'owner'
-        ? (cursor ? [card('a'),card('b')] : [...[...sharedTaxonomy,deletedTopic].sort((a,b) => a.id.localeCompare(b.id)),pack('a'),pack('b')]).map(ownerProjection)
+        ? (cursor ? [card('a'),card('b')] : [...[...sharedTaxonomy,deletedTopic].sort((a,b) => a.id.localeCompare(b.id)),pack('a'),pack('b'),
+          {resourceType:'pack',id:'pack-legacy',topicId:'taxonomy',name:'Unassigned legacy Pack',state:'active',revision:1},
+          {resourceType:'pack',id:'pack-deleted',topicId:'taxonomy',name:'Deleted Pack',state:'deleted',revision:3}]).map(ownerProjection)
         : cursor ? [card(uid)] : [...sharedTaxonomy,pack(uid,interrupt)];
       returned.push({uid,items});
       return res.end(JSON.stringify({protocolVersion:1,scopeVersion:1,items,nextCursor:cursor ? null : `${uid}-page2`,
@@ -108,10 +111,12 @@ const server = http.createServer((req,res) => {
       await navigator.serviceWorker.ready;
       if (!navigator.serviceWorker.controller) await new Promise(resolve => navigator.serviceWorker.addEventListener('controllerchange',resolve,{once:true}));
     });
-    const edit = async (name, existing = false) => {
-      await page.getByRole('button',{name:existing ? 'Edit local draft' : 'Edit name locally',exact:true}).click();
-      await typeField('Name',name);
-      await page.getByRole('button',{name:'Save locally',exact:true}).click();
+    const edit = async (name, existing = false, keyboard = false) => {
+      await page.getByRole('button',{name:existing ? 'Edit local draft' : 'Edit Pack',exact:true}).click();
+      await typeField('Pack name',name);
+      if (keyboard) await page.getByRole('textbox',{name:'Pack name',exact:true}).press('Enter');
+      else await page.getByRole('button',{name:'Save Pack draft locally',exact:true}).click();
+      await typeField('Search Packs','');
       await content(name).waitFor();
     };
     await edit('A durable local draft');
@@ -128,7 +133,6 @@ const server = http.createServer((req,res) => {
     await page.getByRole('button',{name:'Refresh dataset',exact:true}).click();
     await status(/Could not complete the operation/).waitFor();
     assert.equal(await content('A partial staging').count(),0);
-    await content('A private pack').waitFor();
     await content('A durable local draft').waitFor();
     interrupt = false;
     await page.getByRole('button',{name:'Refresh dataset',exact:true}).click();
@@ -304,6 +308,63 @@ const server = http.createServer((req,res) => {
     assert.equal(classifiedDraft.status,'unsent');
     assert.equal(classifiedDraft.value.createdByUid,undefined);
     assert.equal(classifiedDraft.value.ownerUid,undefined);
+    console.log('T29 classification passed; starting T30 Pack lifecycle flows.');
+    await page.setViewportSize({width:1440,height:1100});
+    await page.goto(origin + '/my-packs?account=owner');
+    await enableSemantics();
+    for (const name of ['A private pack','B private pack','Unassigned legacy Pack','Deleted Pack']) {
+      await content(name).waitFor();
+    }
+    await content('Creator: Unassigned legacy draft').waitFor();
+    const packSyncCalls = syncCalls();
+    await typeField('Search Packs','Unassigned legacy Pack');
+    await content('Unassigned legacy Pack').waitFor();
+    assert.equal(await content('A private pack').count(),0);
+    assert.equal(syncCalls(),packSyncCalls,'Pack search is local');
+    await content('Draft — no eligible Cards; not playable or publishable').waitFor();
+    await typeField('Search Packs','A private pack');
+    await edit('Owner stale Pack edit',false,true);
+    packRevision = 2;
+    await page.getByRole('button',{name:'Refresh dataset',exact:true}).click();
+    await typeField('Search Packs','A private pack');
+    await content('Conflict — review before queueing').waitFor();
+    assert.equal(await page.getByRole('button',{name:'Queue commit',exact:true}).count(),0,
+      'a stale Pack edit cannot be queued');
+    await page.getByRole('button',{name:'Discard local change',exact:true}).click();
+    // Deletion, restoration and permanent deletion each need explicit Owner
+    // confirmation. Cancelling leaves the synchronized record untouched.
+    for (const [query,action,confirm] of [
+      ['A private pack','Delete Pack','delete'],
+      ['Deleted Pack','Restore Pack','restore'],
+      ['Deleted Pack','Permanently delete Pack','permanently delete'],
+    ]) {
+      await typeField('Search Packs',query);
+      await page.getByRole('button',{name:action,exact:true}).click();
+      await page.getByRole('button',{name:'Cancel',exact:true}).click();
+      assert.equal(await page.getByRole('button',{name:'Queue commit',exact:true}).count(),0);
+      await page.getByRole('button',{name:action,exact:true}).click();
+      await page.getByRole('button',{name:`Confirm local ${confirm}`,exact:true}).click();
+      await page.getByRole('button',{name:'Queue commit',exact:true}).click();
+      await content('Unsent commit — queued locally').waitFor();
+      await page.getByRole('button',{name:'Discard local change',exact:true}).click();
+    }
+    await typeField('Search Packs','B private pack');
+    await page.getByRole('button',{name:'Hide Pack',exact:true}).click();
+    await page.getByRole('button',{name:'Queue commit',exact:true}).click();
+    await content('Unsent commit — queued locally').waitFor();
+    await page.reload();
+    await enableSemantics();
+    await typeField('Search Packs','B private pack');
+    await content('Unsent commit — queued locally').waitFor();
+    await page.screenshot({path:'/tmp/t30-owner-packs.png'});
+    await page.goto(origin + '/my-packs?account=b');
+    await enableSemantics();
+    await content('B classified draft').waitFor();
+    for (const name of ['Delete Pack','Restore Pack','Permanently delete Pack']) {
+      assert.equal(await page.getByRole('button',{name,exact:true}).count(),0);
+    }
+    assert.equal(await content('Unassigned legacy Pack').count(),0);
+    assert.equal(await content('A private pack').count(),0);
     for (const response of returned.filter(response => response.uid !== 'owner')) {
       for (const record of response.items.filter(record => record.resourceType === 'topic')) {
         assert.deepEqual(Object.keys(record).sort(),['id','name','resourceType','revision','state']);
@@ -348,7 +409,7 @@ const server = http.createServer((req,res) => {
     assert.deepEqual(errors,[],'no browser runtime errors');
     await page.screenshot({path:'/tmp/t28-dataset-browser-final.png'});
     await context.close();
-    console.log(`T28/T29 dataset Chromium PASS: Owner Topic create/rename/hide/delete/restore/search and queued reload, Collector minimal taxonomy and independent mobile Pack classification;  scoped initial paging, local draft/queue reload, interrupted sync rollback, offline edits/reload, revoked reconnect, first-offline denial, B isolation and sign-out cleanup; ${requests.length} private GETs, zero uploads.`);
+    console.log(`T28/T29/T30 dataset Chromium PASS: Owner global/legacy Pack view, stale edit, confirmed delete/restore/purge and durable hide; Owner Topic create/rename/hide/delete/restore/search and queued reload, Collector minimal taxonomy and independent mobile Pack classification;  scoped initial paging, local draft/queue reload, interrupted sync rollback, offline edits/reload, revoked reconnect, first-offline denial, B isolation and sign-out cleanup; ${requests.length} private GETs, zero uploads.`);
   } catch (error) {
     if (diagnosticPage && !diagnosticPage.isClosed()) {
       console.error('Dataset browser diagnostics:',JSON.stringify({errors,requests,returned,body:await diagnosticPage.locator('body').innerText()}));

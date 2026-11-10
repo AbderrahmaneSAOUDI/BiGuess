@@ -597,6 +597,211 @@ void main() {
     await connect();
   }
 
+  test('T28 full-record Pack drafts queue after readonly metadata validation and normalization', () async {
+    await ownerConnect();
+    final pack = {
+      ...controller.snapshot!.records.singleWhere((r) => r['id'] == 'pack-a'),
+      'createdByUid': 'historical-creator',
+    };
+    controller.snapshot = controller.snapshot!.copyWith(
+      records: controller.snapshot!.records
+          .map((r) => r['id'] == 'pack-a' ? pack : r)
+          .toList(),
+    );
+    final legacy = LocalDraft.fromJson({
+      'id': 'legacy',
+      'resourceType': 'pack',
+      'resourceId': 'pack-a',
+      'baseRevision': 1,
+      'value': {...pack, 'name': 'Retained local name'},
+      'status': 'draft',
+    });
+    controller.snapshot = controller.snapshot!.copyWith(drafts: [legacy]);
+    await controller.queueDraft(legacy.id);
+    expect(controller.snapshot!.drafts.single.value, {
+      'name': 'Retained local name',
+      'topicId': 'topic',
+    });
+    expect(controller.snapshot!.drafts.single.status, DraftStatus.unsent);
+    expect(controller.snapshot!.drafts.single.baseRevision, 1);
+    for (final forged in [
+      {...legacy.value, 'createdByUid': 'attacker'},
+      {...legacy.value, 'id': 'other-pack'},
+      {...legacy.value, 'unknown': 'metadata'},
+    ]) {
+      controller.snapshot = controller.snapshot!.copyWith(
+        drafts: [legacy.copyWith(value: forged)],
+      );
+      await expectLater(
+        controller.queueDraft(legacy.id),
+        throwsA(storageFailure('invalid-draft')),
+      );
+    }
+  });
+
+  test(
+    'Pack drafts remain nonplayable and queue only scoped minimal values',
+    () async {
+      await connect();
+      expect(controller.packs.single.isDraft, isTrue);
+      expect(controller.packs.single.playable, isFalse);
+      await controller.updatePack(
+        'pack-a',
+        name: 'Edited own Pack',
+        topicId: 'topic',
+        expectedRevision: 1,
+      );
+      final draft = controller.snapshot!.drafts.single;
+      expect(draft.value, {'name': 'Edited own Pack', 'topicId': 'topic'});
+      expect(controller.packs.single.name, 'Edited own Pack');
+      await controller.queueDraft(draft.id);
+      expect(controller.packs.single.pending!.status, DraftStatus.unsent);
+      await expectLater(
+        controller.updatePack('pack-b', name: 'Foreign', topicId: 'topic'),
+        throwsA(storageFailure('invalid-pack-state')),
+      );
+      for (final operation in [
+        () => controller.deletePack('pack-a'),
+        () => controller.restorePack('pack-a'),
+        () => controller.purgePack('pack-a'),
+      ]) {
+        await expectLater(operation(), throwsA(storageFailure('forbidden')));
+      }
+      await controller.discardDraft(draft.id);
+      await controller.hidePack('pack-a', expectedRevision: 1);
+      expect(controller.packs.single.state, 'hidden');
+      await expectLater(
+        controller.saveDraft(
+          controller.snapshot!.records.last,
+          name: 'Cannot replace hide',
+        ),
+        throwsA(storageFailure('pack-pending-change')),
+      );
+      await controller.queueDraft(controller.snapshot!.drafts.single.id);
+    },
+  );
+
+  test('Owner Pack global projection includes unassigned legacy and eligibility ignores hidden Cards', () async {
+    await ownerConnect();
+    expect(controller.packs.single.createdByUid, isNull);
+    expect(controller.packs.single.eligibleCardCount, 1);
+    expect(controller.packs.single.isDraft, isFalse);
+    controller.snapshot = controller.snapshot!.copyWith(
+      records: controller.snapshot!.records
+          .map(
+            (r) => r['resourceType'] == 'card' ? {...r, 'state': 'hidden'} : r,
+          )
+          .toList(),
+    );
+    expect(controller.packs.single.isDraft, isTrue);
+    expect(controller.packs.single.playable, isFalse);
+    await controller.updatePack(
+      'pack-a',
+      name: 'Legacy edit',
+      topicId: 'topic',
+    );
+    expect(controller.snapshot!.drafts.single.value.keys.toSet(), {
+      'name',
+      'topicId',
+    });
+  });
+
+  test('Pack edits reject parent moves invalid parents and captured stale revisions', () async {
+    await ownerConnect();
+    await expectLater(
+      controller.updatePack('pack-a', name: 'Move', topicId: 'other-topic'),
+      throwsA(storageFailure('pack-topic-immutable')),
+    );
+    await expectLater(
+      controller.updatePack(
+        'pack-a',
+        name: 'Stale',
+        topicId: 'topic',
+        expectedRevision: 0,
+      ),
+      throwsA(storageFailure('draft-conflict')),
+    );
+    await expectLater(
+      controller.deletePack('pack-a', expectedRevision: 0),
+      throwsA(storageFailure('draft-conflict')),
+    );
+    await controller.deleteTopic('topic');
+    await expectLater(
+      controller.updatePack(
+        'pack-a',
+        name: 'Under deleted parent',
+        topicId: 'topic',
+      ),
+      throwsA(storageFailure('topic-not-eligible')),
+    );
+    expect(controller.snapshot!.drafts.single.resourceType, 'topic');
+  });
+
+  test('Owner destructive Pack operations persist separately and enforce child-first purge', () async {
+    await ownerConnect();
+    await controller.deletePack('pack-a', expectedRevision: 1);
+    expect(controller.packs.single.state, 'deleted');
+    await controller.queueDraft(controller.snapshot!.drafts.single.id);
+    expect(controller.snapshot!.drafts.single.action, 'softDelete');
+    expect(
+      controller.snapshot!.records.singleWhere(
+        (r) => r['id'] == 'pack-a',
+      )['state'],
+      'active',
+    );
+    await controller.discardDraft(controller.snapshot!.drafts.single.id);
+    controller.snapshot = controller.snapshot!.copyWith(
+      records: controller.snapshot!.records
+          .map(
+            (r) => r['id'] == 'pack-a'
+                ? {...r, 'state': 'deleted', 'revision': 2}
+                : r,
+          )
+          .toList(),
+    );
+    await controller.restorePack('pack-a', expectedRevision: 2);
+    expect(controller.packs.single.state, 'hidden');
+    expect(controller.packs.single.playable, isFalse);
+    await controller.discardDraft(controller.snapshot!.drafts.single.id);
+    await expectLater(
+      controller.purgePack('pack-a'),
+      throwsA(storageFailure('pack-has-children')),
+    );
+    controller.snapshot = controller.snapshot!.copyWith(
+      records: controller.snapshot!.records
+          .where((r) => r['resourceType'] != 'card')
+          .toList(),
+    );
+    await controller.purgePack('pack-a');
+    await controller.queueDraft(controller.snapshot!.drafts.single.id);
+    final restored = DatasetSnapshot.fromJson(controller.snapshot!.toJson());
+    expect(restored.drafts.single.action, 'permanentDelete');
+    expect(restored.drafts.single.status, DraftStatus.unsent);
+    expect(controller.packs.single.state, 'purged');
+  });
+
+  test(
+    'Pack destruction and dependent Card drafts reject either write order',
+    () async {
+      await ownerConnect();
+      final card = controller.snapshot!.records.singleWhere(
+        (r) => r['resourceType'] == 'card',
+      );
+      await controller.saveDraft(card, name: 'Child edit');
+      await expectLater(
+        controller.deletePack('pack-a'),
+        throwsA(storageFailure('pack-has-pending-children')),
+      );
+      await controller.discardDraft(controller.snapshot!.drafts.single.id);
+      await controller.deletePack('pack-a');
+      await expectLater(
+        controller.saveDraft(card, name: 'Child edit'),
+        throwsA(storageFailure('pack-has-pending-children')),
+      );
+      expect(controller.snapshot!.drafts.single.action, 'softDelete');
+    },
+  );
+
   test('Owner creates and queues Topic locally without changing synced records or making network writes', () async {
     await ownerConnect();
     final recordsBefore = controller.snapshot!.records;
@@ -815,7 +1020,7 @@ void main() {
         controller.snapshot!.records.singleWhere((r) => r['id'] == 'pack-a'),
         name: 'Late Pack',
       ),
-      throwsA(storageFailure('topic-has-pending-children')),
+      throwsA(storageFailure('topic-not-eligible')),
     );
     expect(controller.snapshot!.toJson(), deleting);
   });
@@ -892,7 +1097,8 @@ void main() {
     final draft = controller.snapshot!.drafts.single;
     expect(draft.baseRevision, pack['revision']);
     expect(draft.value['topicId'], pack['topicId']);
-    expect(draft.value['state'], pack['state']);
+    expect(draft.value.keys.toSet(), {'name', 'topicId'});
+    expect(draft.value.containsKey('createdByUid'), isFalse);
     await controller.queueDraft(draft.id);
     controller.snapshot = controller.snapshot!.copyWith(
       drafts: [

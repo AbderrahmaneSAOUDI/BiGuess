@@ -7,6 +7,7 @@ import '../data/dataset_controller.dart';
 import '../data/studio_dataset.dart';
 import 'topics_page.dart';
 import 'pack_draft_dialog.dart';
+import 'packs_page.dart';
 
 /// First-sync workspace. Full Topic/Pack/Card authoring remains in later tickets.
 class DatasetPage extends StatelessWidget {
@@ -99,20 +100,8 @@ class DatasetPage extends StatelessWidget {
               ),
             ],
             if (route == StudioRoute.topics) TopicsPage(controller: controller),
-            if (route == StudioRoute.myPacks) ...[
-              Align(
-                alignment: Alignment.centerLeft,
-                child: FilledButton.tonal(
-                  onPressed: () => showDialog<void>(
-                    context: context,
-                    builder: (_) => PackDraftDialog(controller: controller),
-                  ),
-                  child: const Text('New Pack draft'),
-                ),
-              ),
-              const SizedBox(height: 12),
-            ],
-            if ({StudioRoute.myPacks, StudioRoute.cards}.contains(route))
+            if (route == StudioRoute.myPacks) PacksPage(controller: controller),
+            if (route == StudioRoute.cards)
               _RecordList(controller: controller, route: route),
             if (route == StudioRoute.dashboard && snapshot.drafts.isNotEmpty)
               _DraftList(controller: controller, drafts: snapshot.drafts),

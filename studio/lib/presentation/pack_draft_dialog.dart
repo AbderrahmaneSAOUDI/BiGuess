@@ -3,22 +3,29 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../data/dataset_controller.dart';
-import '../data/dataset_store.dart';
 import '../data/studio_dataset.dart';
+import '../data/pack_summary.dart';
+import 'packs_page.dart' show packFailureMessage;
 import 'topic_picker.dart';
 
 /// A classification entry point independent of Topic administration.
 class PackDraftDialog extends StatefulWidget {
-  const PackDraftDialog({super.key, required this.controller, this.draft});
+  const PackDraftDialog({
+    super.key,
+    required this.controller,
+    this.draft,
+    this.pack,
+  });
   final DatasetController controller;
   final LocalDraft? draft;
+  final PackSummary? pack;
   @override
   State<PackDraftDialog> createState() => _PackDraftDialogState();
 }
 
 class _PackDraftDialogState extends State<PackDraftDialog> {
   late final _name = TextEditingController(
-    text: widget.draft?.value['name'] as String? ?? '',
+    text: widget.pack?.name ?? widget.draft?.value['name'] as String? ?? '',
   );
   late final String? _scope;
   String? _topicId;
@@ -29,7 +36,8 @@ class _PackDraftDialogState extends State<PackDraftDialog> {
   void initState() {
     super.initState();
     _scope = widget.controller.scope?.namespace;
-    _topicId = widget.draft?.value['topicId'] as String?;
+    _topicId =
+        widget.pack?.topicId ?? widget.draft?.value['topicId'] as String?;
     widget.controller.addListener(_changed);
   }
 
@@ -65,14 +73,21 @@ class _PackDraftDialogState extends State<PackDraftDialog> {
       _error = null;
     });
     try {
-      if (widget.draft == null) {
+      if (widget.pack != null && widget.pack!.revision > 0) {
+        await widget.controller.updatePack(
+          widget.pack!.id,
+          name: _name.text.trim(),
+          topicId: _topicId!,
+          expectedRevision: widget.pack!.revision,
+        );
+      } else if ((widget.draft ?? widget.pack?.pending) == null) {
         await widget.controller.createPackDraft(
           name: _name.text.trim(),
           topicId: _topicId!,
         );
       } else {
         await widget.controller.updatePackDraft(
-          widget.draft!.id,
+          (widget.draft ?? widget.pack!.pending)!.id,
           name: _name.text.trim(),
           topicId: _topicId!,
         );
@@ -82,10 +97,7 @@ class _PackDraftDialogState extends State<PackDraftDialog> {
       if (!mounted || _closed) return;
       setState(() {
         _saving = false;
-        _error =
-            error is DatasetStorageFailure && error.code == 'topic-not-eligible'
-            ? 'That Topic is no longer eligible. Choose another existing Topic.'
-            : 'Could not save locally. Your name is still here; check storage and retry.';
+        _error = packFailureMessage(error);
       });
     }
   }
@@ -95,7 +107,9 @@ class _PackDraftDialogState extends State<PackDraftDialog> {
       ? const SizedBox.shrink()
       : AlertDialog(
           title: Text(
-            widget.draft == null ? 'New Pack draft' : 'Edit Pack draft',
+            widget.draft == null && widget.pack == null
+                ? 'New Pack draft'
+                : 'Edit Pack draft',
           ),
           content: SizedBox(
             width: 440,
@@ -109,20 +123,28 @@ class _PackDraftDialogState extends State<PackDraftDialog> {
                     enabled: !_saving,
                     autofocus: true,
                     decoration: const InputDecoration(labelText: 'Pack name'),
+                    onSubmitted: (_) {
+                      if (!_saving) _save();
+                    },
                   ),
                   const SizedBox(height: 12),
-                  IgnorePointer(
-                    ignoring: _saving,
-                    child: TopicPicker(
-                      controller: widget.controller,
-                      value: _topicId,
-                      onChanged: (value) {
-                        if (mounted && !_closed) {
-                          setState(() => _topicId = value);
-                        }
-                      },
+                  if (widget.pack != null && widget.pack!.revision > 0)
+                    Text(
+                      'Topic: ${widget.pack!.topicId} (fixed for synchronized Packs)',
+                    )
+                  else
+                    IgnorePointer(
+                      ignoring: _saving,
+                      child: TopicPicker(
+                        controller: widget.controller,
+                        value: _topicId,
+                        onChanged: (value) {
+                          if (mounted && !_closed) {
+                            setState(() => _topicId = value);
+                          }
+                        },
+                      ),
                     ),
-                  ),
                   const SizedBox(height: 12),
                   const Text(
                     'This saves a local Pack draft with one Topic. It does not upload or publish content.',

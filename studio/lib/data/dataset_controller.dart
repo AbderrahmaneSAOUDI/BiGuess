@@ -10,6 +10,7 @@ import 'dataset_store.dart';
 import 'studio_dataset.dart';
 import 'offline_access_policy.dart';
 import 'topic_taxonomy.dart';
+import 'pack_summary.dart';
 
 enum DatasetPhase { idle, loading, ready, offline, error, denied }
 
@@ -139,7 +140,15 @@ class DatasetController extends ChangeNotifier {
       if (cached != null) {
         _validate(cached.records, target);
         if (target.role == 'collector' &&
-            cached.drafts.any((d) => d.resourceType == 'topic')) {
+            cached.drafts.any(
+              (d) =>
+                  d.resourceType == 'topic' ||
+                  {
+                    'softDelete',
+                    'restore',
+                    'permanentDelete',
+                  }.contains(d.action),
+            )) {
           throw const DatasetApiFailure('invalid-dataset');
         }
       }
@@ -299,6 +308,14 @@ class DatasetController extends ChangeNotifier {
     )) {
       throw const DatasetStorageFailure('topic-has-pending-children');
     }
+    if (drafts.any(
+      (d) =>
+          d.resourceType == 'pack' &&
+          {'softDelete', 'permanentDelete'}.contains(d.action) &&
+          _hasPackDraftChildren(candidate, d.resourceId),
+    )) {
+      throw const DatasetStorageFailure('pack-has-pending-children');
+    }
     try {
       final saved = await store.save(
         candidate,
@@ -325,6 +342,17 @@ class DatasetController extends ChangeNotifier {
     required String name,
   }) async {
     _name(name);
+    if (record['resourceType'] == 'pack') {
+      final stored = _workingSnapshot().records
+          .where((r) => r['resourceType'] == 'pack' && r['id'] == record['id'])
+          .firstOrNull;
+      if (stored == null) throw const DatasetStorageFailure('storage-closed');
+      return updatePack(
+        stored['id']! as String,
+        name: name,
+        topicId: stored['topicId']! as String,
+      );
+    }
     final kind = record['resourceType'];
     if (!{'pack', 'card'}.contains(kind)) {
       throw const DatasetStorageFailure('invalid-draft');
@@ -560,6 +588,266 @@ class DatasetController extends ChangeNotifier {
     ]);
   }
 
+  List<PackSummary> get packs {
+    final current = snapshot;
+    if (current == null || scope == null) return const [];
+    final pending = {
+      for (final d in current.drafts.where((d) => d.resourceType == 'pack'))
+        d.resourceId: d,
+    };
+    final result = <PackSummary>[];
+    for (final record in current.records.where(
+      (r) => r['resourceType'] == 'pack',
+    )) {
+      if (scope!.role == 'collector' &&
+          !{'active', 'hidden'}.contains(record['state'])) {
+        continue;
+      }
+      final id = record['id']! as String;
+      final draft = pending.remove(id);
+      final apply = draft != null && draft.status != DraftStatus.conflict;
+      final state = apply
+          ? switch (draft.action) {
+              'hide' || 'restore' => 'hidden',
+              'softDelete' => 'deleted',
+              'permanentDelete' => 'purged',
+              _ => record['state']! as String,
+            }
+          : record['state']! as String;
+      final cardCount = current.records
+          .where(
+            (r) =>
+                r['resourceType'] == 'card' &&
+                r['packId'] == id &&
+                r['state'] == 'active' &&
+                (r['imageReference'] as String? ?? '').isNotEmpty &&
+                (r['name'] as String? ?? '').trim().isNotEmpty,
+          )
+          .length;
+      result.add(
+        PackSummary(
+          id: id,
+          name: apply
+              ? draft.value['name'] as String? ??
+                    record['name'] as String? ??
+                    id
+              : record['name'] as String? ?? id,
+          topicId: record['topicId']! as String,
+          state: state,
+          revision: record['revision']! as int,
+          pending: draft,
+          createdByUid: record['createdByUid'] as String?,
+          eligibleCardCount: cardCount,
+          parentEligible: eligibleTopics.any((t) => t.id == record['topicId']),
+        ),
+      );
+    }
+    for (final draft in pending.values.where((d) => d.action == 'create')) {
+      result.add(
+        PackSummary(
+          id: draft.resourceId,
+          name: draft.value['name']! as String,
+          topicId: draft.value['topicId']! as String,
+          state: 'active',
+          revision: 0,
+          pending: draft,
+          eligibleCardCount: 0,
+        ),
+      );
+    }
+    result.sort((a, b) {
+      final order = a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      return order == 0 ? a.id.compareTo(b.id) : order;
+    });
+    return List.unmodifiable(result);
+  }
+
+  Future<void> updatePack(
+    String id, {
+    required String name,
+    required String topicId,
+    int? expectedRevision,
+  }) async {
+    final current = _workingSnapshot();
+    final record = current.records
+        .where((r) => r['resourceType'] == 'pack' && r['id'] == id)
+        .firstOrNull;
+    if (record == null || !{'active', 'hidden'}.contains(record['state'])) {
+      throw const DatasetStorageFailure('invalid-pack-state');
+    }
+    if (expectedRevision != null && record['revision'] != expectedRevision) {
+      throw const DatasetStorageFailure('draft-conflict');
+    }
+    if (record['topicId'] != topicId) {
+      throw const DatasetStorageFailure('pack-topic-immutable');
+    }
+    if (!eligibleTopics.any((t) => t.id == topicId)) {
+      throw const DatasetStorageFailure('topic-not-eligible');
+    }
+    final existing = current.drafts
+        .where((d) => d.resourceType == 'pack' && d.resourceId == id)
+        .firstOrNull;
+    if (existing?.status == DraftStatus.conflict ||
+        existing != null && existing.baseRevision != record['revision']) {
+      throw const DatasetStorageFailure('draft-conflict');
+    }
+    if (existing != null && existing.action != 'update') {
+      throw const DatasetStorageFailure('pack-pending-change');
+    }
+    final draft = LocalDraft(
+      id: jsonEncode(['pack', id]),
+      resourceType: 'pack',
+      resourceId: id,
+      baseRevision: existing?.baseRevision ?? record['revision']! as int,
+      value: {'name': _name(name), 'topicId': topicId},
+    );
+    await _saveDrafts([
+      ...current.drafts.where((d) => d.id != draft.id),
+      draft,
+    ]);
+  }
+
+  Future<void> hidePack(String id, {int? expectedRevision}) =>
+      _packAction(id, 'hide', expectedRevision: expectedRevision);
+  Future<void> deletePack(String id, {int? expectedRevision}) =>
+      _packAction(id, 'softDelete', expectedRevision: expectedRevision);
+  Future<void> restorePack(String id, {int? expectedRevision}) =>
+      _packAction(id, 'restore', expectedRevision: expectedRevision);
+  Future<void> purgePack(String id, {int? expectedRevision}) =>
+      _packAction(id, 'permanentDelete', expectedRevision: expectedRevision);
+
+  bool _hasPackDraftChildren(DatasetSnapshot current, String id) =>
+      current.drafts.any(
+        (d) =>
+            d.resourceType == 'card' &&
+            (d.value['packId'] == id ||
+                current.records.any(
+                  (r) =>
+                      r['resourceType'] == 'card' &&
+                      r['id'] == d.resourceId &&
+                      r['packId'] == id,
+                )),
+      );
+
+  void _validatePackOperation(LocalDraft draft) {
+    final current = _workingSnapshot(
+      owner: {
+        'softDelete',
+        'restore',
+        'permanentDelete',
+      }.contains(draft.action),
+    );
+    final record = current.records
+        .where(
+          (r) => r['resourceType'] == 'pack' && r['id'] == draft.resourceId,
+        )
+        .firstOrNull;
+    if (!{
+      'create',
+      'update',
+      'hide',
+      'softDelete',
+      'restore',
+      'permanentDelete',
+    }.contains(draft.action)) {
+      throw const DatasetStorageFailure('invalid-draft');
+    }
+    // T28 name drafts retained a complete synced record. Accept only matching
+    // readonly metadata on updates, then normalize the queued operation below.
+    final legacyMetadata = draft.value.keys.where(
+      (key) => !{'name', 'topicId'}.contains(key),
+    );
+    final validMetadata =
+        legacyMetadata.isEmpty ||
+        draft.action == 'update' &&
+            record != null &&
+            legacyMetadata.every(
+              (key) =>
+                  {
+                    'resourceType',
+                    'id',
+                    'state',
+                    'revision',
+                    'createdByUid',
+                    'createdAt',
+                  }.contains(key) &&
+                  record.containsKey(key) &&
+                  record[key] == draft.value[key],
+            );
+    if (!validMetadata ||
+        draft.value['name'] is! String ||
+        draft.value['topicId'] is! String) {
+      throw const DatasetStorageFailure('invalid-draft');
+    }
+    _name(draft.value['name']! as String);
+    if (draft.action == 'create' ||
+        draft.action == 'update' ||
+        draft.action == 'hide' ||
+        draft.action == 'restore') {
+      if (!eligibleTopics.any((t) => t.id == draft.value['topicId'])) {
+        throw const DatasetStorageFailure('topic-not-eligible');
+      }
+    }
+    if (draft.action == 'create') return;
+    if (record == null ||
+        record['state'] == 'purged' ||
+        ({'restore', 'permanentDelete'}.contains(draft.action)
+            ? record['state'] != 'deleted'
+            : !{'active', 'hidden'}.contains(record['state'])) ||
+        draft.action == 'hide' && record['state'] != 'active') {
+      throw const DatasetStorageFailure('invalid-pack-state');
+    }
+    if (record['topicId'] != draft.value['topicId']) {
+      throw const DatasetStorageFailure('pack-topic-immutable');
+    }
+    if ({'softDelete', 'permanentDelete'}.contains(draft.action) &&
+        _hasPackDraftChildren(current, draft.resourceId)) {
+      throw const DatasetStorageFailure('pack-has-pending-children');
+    }
+    if (draft.action == 'permanentDelete' &&
+        current.records.any(
+          (r) =>
+              r['resourceType'] == 'card' &&
+              r['packId'] == draft.resourceId &&
+              r['state'] != 'purged',
+        )) {
+      throw const DatasetStorageFailure('pack-has-children');
+    }
+  }
+
+  Future<void> _packAction(
+    String id,
+    String action, {
+    int? expectedRevision,
+  }) async {
+    final current = _workingSnapshot(owner: action != 'hide');
+    if (current.drafts.any(
+      (d) => d.resourceType == 'pack' && d.resourceId == id,
+    )) {
+      throw const DatasetStorageFailure('pack-pending-change');
+    }
+    final record = current.records
+        .where((r) => r['resourceType'] == 'pack' && r['id'] == id)
+        .firstOrNull;
+    if (record == null) throw const DatasetStorageFailure('invalid-pack-state');
+    if (expectedRevision != null && record['revision'] != expectedRevision) {
+      throw const DatasetStorageFailure('draft-conflict');
+    }
+    final draft = LocalDraft(
+      id: jsonEncode(['pack', id]),
+      resourceType: 'pack',
+      resourceId: id,
+      action: action,
+      baseRevision: record['revision']! as int,
+      value: {
+        'name': record['name'] as String? ?? id,
+        'topicId': record['topicId']! as String,
+      },
+    );
+    _validatePackOperation(draft);
+    await _saveDrafts([...current.drafts, draft]);
+  }
+
   Future<void> createPackDraft({
     required String name,
     required String topicId,
@@ -666,16 +954,8 @@ class DatasetController extends ChangeNotifier {
           _hasPendingChildren(current, draft.resourceId)) {
         throw const DatasetStorageFailure('topic-has-pending-children');
       }
-    } else if (draft.resourceType == 'pack' && draft.action == 'create') {
-      if (draft.value.keys.length != 2 ||
-          draft.value['name'] is! String ||
-          draft.value['topicId'] is! String) {
-        throw const DatasetStorageFailure('invalid-draft');
-      }
-      _name(draft.value['name']! as String);
-      if (!eligibleTopics.any((t) => t.id == draft.value['topicId'])) {
-        throw const DatasetStorageFailure('topic-not-eligible');
-      }
+    } else if (draft.resourceType == 'pack') {
+      _validatePackOperation(draft);
     }
   }
 
@@ -687,7 +967,17 @@ class DatasetController extends ChangeNotifier {
     await _saveDrafts(
       current.drafts
           .map(
-            (d) => d.id == draftId ? d.copyWith(status: DraftStatus.unsent) : d,
+            (d) => d.id == draftId
+                ? d.copyWith(
+                    status: DraftStatus.unsent,
+                    value: d.resourceType == 'pack'
+                        ? {
+                            'name': d.value['name'],
+                            'topicId': d.value['topicId'],
+                          }
+                        : null,
+                  )
+                : d,
           )
           .toList(),
     );
@@ -697,7 +987,11 @@ class DatasetController extends ChangeNotifier {
     final current = _workingSnapshot();
     final draft = current.drafts.where((d) => d.id == draftId).firstOrNull;
     if (draft == null) throw const DatasetStorageFailure('invalid-draft');
-    _workingSnapshot(owner: draft.resourceType == 'topic');
+    _workingSnapshot(
+      owner:
+          draft.resourceType == 'topic' ||
+          {'softDelete', 'restore', 'permanentDelete'}.contains(draft.action),
+    );
     await _saveDrafts(current.drafts.where((d) => d.id != draftId).toList());
   }
 

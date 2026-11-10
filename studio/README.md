@@ -251,6 +251,40 @@ change instead of silently losing it. Existing T28 name drafts read as `update`
 when the new field is absent. Older app versions may refuse newer operation
 metadata rather than reinterpret it; they do not delete those stored drafts.
 
-See [T29 verification](T29-VERIFICATION.md). Full Pack lifecycle, Card authoring
-and server mutation transport remain later tickets. The private Content Backend
-is not activated or deployed by this work.
+See [T29 verification](T29-VERIFICATION.md). Pack lifecycle is covered by T30
+below; Card authoring and server mutation transport remain later tickets. The
+private Content Backend is not activated or deployed by this work.
+
+## Contributor Pack administration (T30)
+
+My Packs provides local name/ID search, lifecycle and pending/synced filters,
+creation with one existing eligible Topic, explicit editing and hiding. Owner
+sees all Packs and readonly creator attribution, including unassigned legacy
+content. Collector membership comes from the authenticated Worker's scoped
+snapshot; no creator UID input, ownership claim or transfer is offered. The
+server assigns ownership from verified identity. A synchronized Pack's Topic is
+fixed; a new unsynced creation can be reclassified through the reusable picker.
+
+Each Pack has at most one pending operation. Saving changes persists locally;
+Queue commit explicitly marks an unsent operation and makes no network mutation.
+Conflicting revisions, ineligible parents, stale modal edits, incompatible
+pending operations and dependent Card drafts block unsafe changes. Refresh
+retains pending work and marks stale revisions as conflicts. Browser storage
+transactions reject stale-tab writes, and existing account/role isolation and
+offline access rules continue to apply.
+
+Only Owner can prepare soft deletion, restoration or permanent deletion, each
+through an explicit confirmation with cancellation. Soft deletion cascades to
+Cards when later committed; restoration selects only the Pack, returns it to
+hidden state and requires an eligible Topic. Permanent deletion is irreversible
+when uploaded and requires contained Cards to have been purged first, matching
+the existing Worker contract. Pending operations can be discarded locally
+before upload. Permanent deletion is stored as `permanentDelete`; older builds
+may reject this new operation instead of misinterpreting it.
+
+A Pack without active Cards with a nonempty name and image reference is shown
+as a draft, never as playable or publishable. The administrative dataset does
+not establish publication status, so even Packs with eligible Cards do not gain
+a publication badge. Card authoring and mutation transport remain later tickets.
+No Content Backend deployment, API activation or mutation upload is added.
+See [T30 verification](T30-VERIFICATION.md).

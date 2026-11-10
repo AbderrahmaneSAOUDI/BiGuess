@@ -106,6 +106,7 @@ class LocalDraft {
               'hide',
               'softDelete',
               'restore',
+              'permanentDelete',
             }.contains(json['action'])) ||
         !_revision(json['baseRevision']) ||
         !_revision(json['publishedRevision'])) {

@@ -428,3 +428,62 @@ test('concurrent Owner parent deletion cannot let a Collector resurrect descenda
   await expect(await s.request('/studio/v1/cards/card-a'), 404, 'not_found');
   assert.equal(await s.db.prepare("SELECT created_by_uid FROM studio_creators WHERE resource_type='pack' AND resource_id='pack-a'").first('created_by_uid'), 'a');
 });
+
+// T30: My Packs must use the same immutable server relationships as the API.
+test('Pack classification accepts existing hidden taxonomy, rejects orphan parents and never transfers a synced Pack', async t => {
+  const s = await setup(t); await s.seed();
+  await expect(await s.commit('topic', 'hidden-topic', [operation('topic', 'hidden-topic', 'create', { name: 'Hidden taxonomy' })], 0));
+  await expect(await s.commit('topic', 'hidden-topic', [operation('topic', 'hidden-topic', 'hide')], 1));
+  await expect(await s.commit('pack', 'hidden-parent-pack', [operation('pack', 'hidden-parent-pack', 'create',
+    { name: 'Classified draft', topicId: 'hidden-topic' })], 0, { actor: 'a' }));
+  assert.equal((await s.row('pack', 'hidden-parent-pack')).parent_id, 'hidden-topic');
+  const before = await s.snapshot();
+  for (const actor of ['a', 'owner']) {
+    await expect(await s.commit('pack', 'pack-a', [operation('pack', 'pack-a', 'update',
+      { name: 'Move attempt', topicId: 'hidden-topic' })], 1, { actor }), 422, 'validation_failed');
+    await expect(await s.commit('pack', `orphan-${actor}`, [operation('pack', `orphan-${actor}`, 'create',
+      { name: 'Orphan attempt', topicId: 'missing-topic' })], 0, { actor }), 422, 'validation_failed');
+    for (const createdByUid of ['b', null]) {
+      await expect(await s.commit('pack', `forged-${actor}`, [operation('pack', `forged-${actor}`, 'create',
+        { name: 'Forged creator', topicId: 'topic', createdByUid })], 0, { actor }), 422, 'validation_failed');
+    }
+  }
+  assert.deepEqual(await s.snapshot(), before, 'invalid association/creator requests must leave every table unchanged');
+  await expect(await s.commit('topic', 'hidden-topic', [operation('topic', 'hidden-topic', 'softDelete')], 2));
+  const afterDelete = await s.snapshot();
+  await expect(await s.commit('pack', 'deleted-parent-pack', [operation('pack', 'deleted-parent-pack', 'create',
+    { name: 'Deleted parent', topicId: 'hidden-topic' })], 0, { actor: 'b' }), 422, 'validation_failed');
+  assert.deepEqual(await s.snapshot(), afterDelete);
+});
+
+test('Owner manages unassigned legacy Packs without claiming them and permanently deletes only after child purge', async t => {
+  const s = await setup(t); await s.seed();
+  await expect(await s.commit('pack', 'legacy-pack', [operation('pack', 'legacy-pack', 'update',
+    { name: 'Owner repaired legacy draft', topicId: 'legacy-topic' })], 7));
+  const legacy = (await expect(await s.request('/studio/v1/packs/legacy-pack', { actor: 'owner' }))).item;
+  assert.equal(legacy.createdByUid, null);
+  assert.equal(legacy.name, 'Owner repaired legacy draft');
+  for (const actor of ['a', 'b']) {
+    await expect(await s.request('/studio/v1/packs/legacy-pack', { actor }), 404, 'not_found');
+    await expect(await s.commit('pack', 'legacy-pack', [operation('pack', 'legacy-pack', 'hide')], 8, { actor }), 404, 'not_found');
+  }
+  await expect(await s.commit('pack', 'pack-a', [operation('pack', 'pack-a', 'softDelete')], 1));
+  assert.equal((await s.row('card', 'card-a')).state, 'deleted');
+  const deleted = await s.snapshot();
+  for (const actor of ['a', 'b']) {
+    await expect(await s.request('/studio/v1/packs?state=deleted', { actor }), 403, 'forbidden');
+    for (const action of ['restore', 'permanentDelete']) {
+      await expect(await s.commit('pack', 'pack-a', [operation('pack', 'pack-a', action)], 2, { actor }), 403, 'forbidden');
+    }
+  }
+  await expect(await s.commit('pack', 'pack-a', [operation('pack', 'pack-a', 'permanentDelete')], 2), 422, 'validation_failed');
+  assert.deepEqual(await s.snapshot(), deleted, 'denied or premature purge cannot mutate a deleted Pack');
+  await expect(await s.commit('pack', 'pack-a', [operation('card', 'card-a', 'permanentDelete')], 2));
+  await expect(await s.commit('pack', 'pack-a', [operation('pack', 'pack-a', 'permanentDelete')], 3));
+  assert.equal((await s.row('pack', 'pack-a')).state, 'purged');
+  assert.equal((await s.row('pack', 'pack-a')).value, null);
+  assert.equal((await s.row('card', 'card-a')).state, 'purged');
+  assert.equal(await s.db.prepare("SELECT created_by_uid FROM studio_creators WHERE resource_type='pack' AND resource_id='pack-a'").first('created_by_uid'), 'a');
+  await expect(await s.commit('pack', 'pack-a', [operation('pack', 'pack-a', 'restore')], 4), 410, 'deleted');
+  await expect(await s.commit('pack', 'pack-a', [newPack('pack-a')], 0), 412, 'revision_conflict');
+});
