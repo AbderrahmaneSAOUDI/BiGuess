@@ -544,4 +544,407 @@ void main() {
       expect(await store().offlineScope('project', 'a'), isNull);
     },
   );
+
+  Future<void> ownerConnect() async {
+    authorization.role = 'owner_admin';
+    api.handler = (_, _) async => InitialDataset([
+      {
+        'resourceType': 'topic',
+        'id': 'topic',
+        'name': 'Main Topic',
+        'state': 'active',
+        'revision': 1,
+      },
+      {
+        'resourceType': 'topic',
+        'id': 'other-topic',
+        'name': 'Hidden taxonomy',
+        'state': 'hidden',
+        'revision': 2,
+      },
+      {
+        'resourceType': 'topic',
+        'id': 'deleted-topic',
+        'name': 'Deleted Topic',
+        'state': 'deleted',
+        'revision': 3,
+      },
+      {
+        'resourceType': 'topic',
+        'id': 'purged-topic',
+        'state': 'purged',
+        'revision': 4,
+      },
+      {
+        'resourceType': 'pack',
+        'id': 'pack-a',
+        'topicId': 'topic',
+        'name': 'Pack A',
+        'state': 'active',
+        'revision': 1,
+      },
+      {
+        'resourceType': 'card',
+        'id': 'card-a',
+        'packId': 'pack-a',
+        'name': 'Card A',
+        'state': 'active',
+        'revision': 1,
+        'imageReference': 'opaque',
+        'difficulty': 1,
+      },
+    ], 'owner-resume');
+    await connect();
+  }
+
+  test('Owner creates and queues Topic locally without changing synced records or making network writes', () async {
+    await ownerConnect();
+    final recordsBefore = controller.snapshot!.records;
+    final calls = api.calls;
+    await controller.createTopic('New Topic');
+    final draft = controller.snapshot!.drafts.single;
+    expect(draft.resourceType, 'topic');
+    expect(draft.action, 'create');
+    expect(draft.baseRevision, isNull);
+    expect(draft.value, {'name': 'New Topic'});
+    expect(controller.snapshot!.records, recordsBefore);
+    expect(
+      controller.topics.singleWhere((t) => t.id == draft.resourceId).revision,
+      0,
+    );
+    expect(
+      controller.eligibleTopics.any((t) => t.id == draft.resourceId),
+      isFalse,
+    );
+    await controller.renameTopic(draft.resourceId, 'Renamed new Topic');
+    expect(controller.snapshot!.drafts.single.action, 'create');
+    expect(controller.snapshot!.drafts.single.resourceId, draft.resourceId);
+    await controller.queueDraft(draft.id);
+    expect(controller.snapshot!.drafts.single.status, DraftStatus.unsent);
+    expect(api.calls, calls);
+  });
+
+  test('Owner rename hide soft-delete and restore produce explicit pending actions and preserve relationships', () async {
+    await ownerConnect();
+    await controller.renameTopic('topic', 'Renamed Main');
+    expect(
+      controller.topics.singleWhere((t) => t.id == 'topic').name,
+      'Renamed Main',
+    );
+    expect(controller.snapshot!.drafts.single.action, 'update');
+    expect(controller.snapshot!.drafts.single.baseRevision, 1);
+    await expectLater(
+      controller.hideTopic('topic'),
+      throwsA(storageFailure('topic-pending-change')),
+    );
+    await controller.discardDraft(controller.snapshot!.drafts.single.id);
+    await controller.hideTopic('topic');
+    expect(
+      controller.topics.singleWhere((t) => t.id == 'topic').state,
+      'hidden',
+    );
+    expect(controller.eligibleTopics.any((t) => t.id == 'topic'), isTrue);
+    await controller.queueDraft(controller.snapshot!.drafts.single.id);
+    expect(controller.snapshot!.drafts.single.action, 'hide');
+    await controller.discardDraft(controller.snapshot!.drafts.single.id);
+    await controller.deleteTopic('topic');
+    expect(
+      controller.topics.singleWhere((t) => t.id == 'topic').state,
+      'deleted',
+    );
+    expect(controller.eligibleTopics.any((t) => t.id == 'topic'), isFalse);
+    expect(
+      controller.snapshot!.records.singleWhere(
+        (r) => r['id'] == 'pack-a',
+      )['topicId'],
+      'topic',
+    );
+    expect(
+      controller.snapshot!.records.singleWhere(
+        (r) => r['id'] == 'topic',
+      )['state'],
+      'active',
+    );
+    await controller.discardDraft(controller.snapshot!.drafts.single.id);
+    await controller.restoreTopic('deleted-topic');
+    expect(
+      controller.topics.singleWhere((t) => t.id == 'deleted-topic').state,
+      'hidden',
+    );
+    expect(
+      controller.eligibleTopics.any((t) => t.id == 'deleted-topic'),
+      isFalse,
+      reason: 'server parent is still deleted',
+    );
+    await controller.queueDraft(controller.snapshot!.drafts.single.id);
+    expect(controller.snapshot!.drafts.single.action, 'restore');
+  });
+
+  test(
+    'Topic lifecycle refuses purged wrong-state and uncommitted new identities',
+    () async {
+      await ownerConnect();
+      for (final action in [
+        () => controller.restoreTopic('purged-topic'),
+        () => controller.restoreTopic('topic'),
+        () => controller.hideTopic('other-topic'),
+        () => controller.renameTopic('deleted-topic', 'No'),
+        () => controller.deleteTopic('missing'),
+      ]) {
+        await expectLater(
+          action(),
+          throwsA(storageFailure('invalid-topic-state')),
+        );
+      }
+      await controller.createTopic('Pending parent');
+      final id = controller.snapshot!.drafts.single.resourceId;
+      await expectLater(
+        controller.hideTopic(id),
+        throwsA(storageFailure('topic-pending-change')),
+      );
+      await expectLater(
+        controller.deleteTopic(id),
+        throwsA(storageFailure('topic-pending-change')),
+      );
+      await expectLater(
+        controller.createPackDraft(name: 'Orphan', topicId: id),
+        throwsA(storageFailure('topic-not-eligible')),
+      );
+      expect(controller.snapshot!.drafts.length, 1);
+    },
+  );
+
+  test('Collector can classify Pack drafts with hidden existing taxonomy but cannot mutate Topics by any entrypoint', () async {
+    await connect();
+    final before = controller.snapshot!.toJson();
+    for (final action in [
+      () => controller.createTopic('No'),
+      () => controller.renameTopic('topic', 'No'),
+      () => controller.hideTopic('topic'),
+      () => controller.deleteTopic('topic'),
+      () => controller.restoreTopic('topic'),
+    ]) {
+      await expectLater(action(), throwsA(storageFailure('forbidden')));
+    }
+    expect(controller.snapshot!.toJson(), before);
+    expect(controller.topics.single.pending, isNull);
+    expect(controller.eligibleTopics.single.id, 'topic');
+    await controller.createPackDraft(
+      name: 'Own classified draft',
+      topicId: 'topic',
+    );
+    final pack = controller.snapshot!.drafts.single;
+    expect(pack.action, 'create');
+    expect(pack.baseRevision, isNull);
+    expect(pack.value, {'name': 'Own classified draft', 'topicId': 'topic'});
+    await controller.queueDraft(pack.id);
+    await controller.updatePackDraft(
+      pack.id,
+      name: 'Updated local Pack',
+      topicId: 'topic',
+    );
+    expect(controller.snapshot!.drafts.single.status, DraftStatus.draft);
+    expect(controller.snapshot!.drafts.single.resourceId, pack.resourceId);
+    await expectLater(
+      controller.createPackDraft(name: 'No', topicId: 'foreign-or-deleted'),
+      throwsA(storageFailure('topic-not-eligible')),
+    );
+    await expectLater(
+      controller.updatePackDraft(
+        pack.id,
+        name: 'No',
+        topicId: 'foreign-or-deleted',
+      ),
+      throwsA(storageFailure('topic-not-eligible')),
+    );
+  });
+
+  test('Collector cannot queue or discard an injected Topic draft even if UI is bypassed', () async {
+    await connect();
+    controller.snapshot = controller.snapshot!.copyWith(
+      drafts: [
+        LocalDraft(
+          id: 'injected',
+          resourceType: 'topic',
+          resourceId: 'topic',
+          baseRevision: 1,
+          value: {'name': 'No'},
+        ),
+      ],
+    );
+    final before = controller.snapshot!.toJson();
+    await expectLater(
+      controller.queueDraft('injected'),
+      throwsA(storageFailure('forbidden')),
+    );
+    await expectLater(
+      controller.discardDraft('injected'),
+      throwsA(storageFailure('forbidden')),
+    );
+    expect(controller.snapshot!.toJson(), before);
+    expect(controller.topics.single.pending, isNull);
+  });
+
+  test('Topic delete and dependent local child drafts cannot coexist in either write order', () async {
+    await ownerConnect();
+    await controller.createPackDraft(name: 'Pending child', topicId: 'topic');
+    final before = controller.snapshot!.toJson();
+    await expectLater(
+      controller.deleteTopic('topic'),
+      throwsA(storageFailure('topic-has-pending-children')),
+    );
+    expect(controller.snapshot!.toJson(), before);
+    await controller.discardDraft(controller.snapshot!.drafts.single.id);
+    await controller.saveDraft(
+      controller.snapshot!.records.singleWhere((r) => r['id'] == 'card-a'),
+      name: 'Pending Card',
+    );
+    await expectLater(
+      controller.deleteTopic('topic'),
+      throwsA(storageFailure('topic-has-pending-children')),
+    );
+    await controller.discardDraft(controller.snapshot!.drafts.single.id);
+    await controller.deleteTopic('topic');
+    final deleting = controller.snapshot!.toJson();
+    await expectLater(
+      controller.createPackDraft(name: 'Orphan', topicId: 'topic'),
+      throwsA(storageFailure('topic-not-eligible')),
+    );
+    await expectLater(
+      controller.saveDraft(
+        controller.snapshot!.records.singleWhere((r) => r['id'] == 'pack-a'),
+        name: 'Late Pack',
+      ),
+      throwsA(storageFailure('topic-has-pending-children')),
+    );
+    expect(controller.snapshot!.toJson(), deleting);
+  });
+
+  test('pending Topic and Pack creates survive refresh while absent remotely and reload durably', () async {
+    await ownerConnect();
+    await controller.createTopic('Pending Topic');
+    await controller.createPackDraft(name: 'Pending Pack', topicId: 'topic');
+    final ids = controller.snapshot!.drafts.map((d) => d.id).toList();
+    await controller.refresh();
+    expect(controller.snapshot!.drafts.map((d) => d.id), ids);
+    expect(
+      controller.snapshot!.drafts.every(
+        (d) => d.action == 'create' && d.status == DraftStatus.draft,
+      ),
+      isTrue,
+    );
+    final persisted = await store().read(controller.scope!);
+    expect(
+      persisted!.drafts.map((d) => d.toJson()),
+      controller.snapshot!.drafts.map((d) => d.toJson()),
+    );
+  });
+
+  test('missing parent on refresh marks Pack create conflict instead of leaving a queueable orphan', () async {
+    await connect();
+    await controller.createPackDraft(name: 'Pending Pack', topicId: 'topic');
+    api.handler = (_, _) async => const InitialDataset([], 'removed-parent');
+    await controller.refresh();
+    expect(controller.snapshot!.drafts.single.status, DraftStatus.conflict);
+    await expectLater(
+      controller.queueDraft(controller.snapshot!.drafts.single.id),
+      throwsA(storageFailure('draft-conflict')),
+    );
+  });
+
+  test('Topic queue state is retained across revision conflict and writes stop after account detach', () async {
+    await ownerConnect();
+    await controller.renameTopic('topic', 'Keep local');
+    final id = controller.snapshot!.drafts.single.id;
+    await controller.queueDraft(id);
+    api.handler = (_, _) async => InitialDataset([
+      {
+        'resourceType': 'topic',
+        'id': 'topic',
+        'name': 'Remote changed',
+        'state': 'active',
+        'revision': 2,
+      },
+    ], 'changed');
+    await controller.refresh();
+    expect(controller.snapshot!.drafts.single.status, DraftStatus.conflict);
+    expect(controller.snapshot!.drafts.single.value['name'], 'Keep local');
+    await expectLater(
+      controller.queueDraft(id),
+      throwsA(storageFailure('draft-conflict')),
+    );
+    await session.logout();
+    await expectLater(
+      controller.createTopic('Late'),
+      throwsA(storageFailure('storage-closed')),
+    );
+    expect(controller.snapshot, isNull);
+  });
+  test('name editing derives parent revision and state from stored record instead of caller data', () async {
+    await connect();
+    final pack = controller.snapshot!.records.last;
+    await controller.saveDraft({
+      ...pack,
+      'topicId': 'forged-topic',
+      'revision': 999,
+      'state': 'purged',
+    }, name: 'Legitimate rename');
+    final draft = controller.snapshot!.drafts.single;
+    expect(draft.baseRevision, pack['revision']);
+    expect(draft.value['topicId'], pack['topicId']);
+    expect(draft.value['state'], pack['state']);
+    await controller.queueDraft(draft.id);
+    controller.snapshot = controller.snapshot!.copyWith(
+      drafts: [
+        draft.copyWith(value: {...draft.value, 'topicId': 'foreign'}),
+      ],
+    );
+    await expectLater(
+      controller.queueDraft(draft.id),
+      throwsA(storageFailure('invalid-draft')),
+    );
+  });
+  test(
+    'Topic names reject C1 controls and unpaired surrogate code units',
+    () async {
+      await ownerConnect();
+      for (final name in [
+        'Bad\u0085name',
+        String.fromCharCodes([0x41, 0xd800]),
+      ]) {
+        await expectLater(
+          controller.createTopic(name),
+          throwsA(storageFailure('invalid-draft')),
+        );
+      }
+      expect(controller.snapshot!.drafts, isEmpty);
+    },
+  );
+  test('Collector cache with an injected Topic draft is rejected before rendering or syncing', () async {
+    await connect();
+    final handle = store();
+    final saved = (await handle.read(controller.scope!))!;
+    await handle.save(
+      saved.copyWith(
+        drafts: [
+          LocalDraft(
+            id: 'injected',
+            resourceType: 'topic',
+            resourceId: 'topic',
+            baseRevision: 1,
+            value: {'name': 'Private injected Topic'},
+          ),
+        ],
+      ),
+      expectedVersion: saved.version,
+    );
+    controller.dispose();
+    api = _Api();
+    controller = createController()..start();
+    await waitFor(() => controller.phase == DatasetPhase.error);
+    expect(controller.errorCode, 'invalid-dataset');
+    expect(controller.snapshot, isNull);
+    expect(controller.scope, isNull);
+    expect(api.calls, 0);
+  });
 }

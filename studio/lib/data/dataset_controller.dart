@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 
@@ -8,6 +9,7 @@ import 'dataset_api.dart';
 import 'dataset_store.dart';
 import 'studio_dataset.dart';
 import 'offline_access_policy.dart';
+import 'topic_taxonomy.dart';
 
 enum DatasetPhase { idle, loading, ready, offline, error, denied }
 
@@ -134,7 +136,13 @@ class DatasetController extends ChangeNotifier {
       if (!_current(epoch)) return;
       final cached = await store.read(target);
       if (!_current(epoch)) return;
-      if (cached != null) _validate(cached.records, target);
+      if (cached != null) {
+        _validate(cached.records, target);
+        if (target.role == 'collector' &&
+            cached.drafts.any((d) => d.resourceType == 'topic')) {
+          throw const DatasetApiFailure('invalid-dataset');
+        }
+      }
       scope = target;
       snapshot = cached;
       if (offline && cached == null) {
@@ -211,9 +219,22 @@ class DatasetController extends ChangeNotifier {
       };
       final drafts = (prior?.drafts ?? <LocalDraft>[]).map((draft) {
         final remote = byId[jsonEncode([draft.resourceType, draft.resourceId])];
-        return remote == null || remote['revision'] != draft.baseRevision
-            ? draft.copyWith(status: DraftStatus.conflict)
-            : draft;
+        final parent = draft.resourceType == 'pack' && draft.action == 'create'
+            ? incoming.records
+                  .where(
+                    (r) =>
+                        r['resourceType'] == 'topic' &&
+                        r['id'] == draft.value['topicId'],
+                  )
+                  .firstOrNull
+            : null;
+        final conflict = draft.action == 'create'
+            ? remote != null ||
+                  (draft.resourceType == 'pack' &&
+                      (parent == null ||
+                          !{'active', 'hidden'}.contains(parent['state'])))
+            : remote == null || remote['revision'] != draft.baseRevision;
+        return conflict ? draft.copyWith(status: DraftStatus.conflict) : draft;
       }).toList();
       final next = DatasetSnapshot(
         scope: target,
@@ -269,9 +290,18 @@ class DatasetController extends ChangeNotifier {
         !{DatasetPhase.ready, DatasetPhase.offline}.contains(phase)) {
       throw const DatasetStorageFailure('storage-closed');
     }
+    final candidate = previous.copyWith(drafts: drafts);
+    if (drafts.any(
+      (d) =>
+          d.resourceType == 'topic' &&
+          d.action == 'softDelete' &&
+          _hasPendingChildren(candidate, d.resourceId),
+    )) {
+      throw const DatasetStorageFailure('topic-has-pending-children');
+    }
     try {
       final saved = await store.save(
-        previous.copyWith(drafts: drafts),
+        candidate,
         expectedVersion: previous.version,
       );
       if (!_current(epoch)) throw const DatasetStorageFailure('storage-closed');
@@ -294,22 +324,18 @@ class DatasetController extends ChangeNotifier {
     Map<String, Object?> record, {
     required String name,
   }) async {
-    if (name.trim().isEmpty ||
-        name.trim() != name ||
-        RegExp(r'[\x00-\x1f\x7f]').hasMatch(name)) {
-      throw const DatasetStorageFailure('invalid-draft');
-    }
+    _name(name);
     final kind = record['resourceType'];
-    if (!{'pack', 'card'}.contains(kind) ||
-        !{'active', 'hidden'}.contains(record['state'])) {
+    if (!{'pack', 'card'}.contains(kind)) {
       throw const DatasetStorageFailure('invalid-draft');
     }
-    final previous = snapshot;
-    if (previous == null ||
-        !previous.records.any(
-          (r) => r['resourceType'] == kind && r['id'] == record['id'],
-        )) {
-      throw const DatasetStorageFailure('storage-closed');
+    final previous = _workingSnapshot();
+    final stored = previous.records
+        .where((r) => r['resourceType'] == kind && r['id'] == record['id'])
+        .firstOrNull;
+    if (stored == null) throw const DatasetStorageFailure('storage-closed');
+    if (!{'active', 'hidden'}.contains(stored['state'])) {
+      throw const DatasetStorageFailure('invalid-draft');
     }
     final key = jsonEncode([kind, record['id']]);
     final existing = previous.drafts.where((d) => d.id == key).firstOrNull;
@@ -317,8 +343,8 @@ class DatasetController extends ChangeNotifier {
       id: key,
       resourceType: kind! as String,
       resourceId: record['id']! as String,
-      baseRevision: existing?.baseRevision ?? record['revision']! as int,
-      value: {...record, 'name': name},
+      baseRevision: existing?.baseRevision ?? stored['revision']! as int,
+      value: {...stored, 'name': name},
       status: existing?.status == DraftStatus.conflict
           ? DraftStatus.conflict
           : DraftStatus.draft,
@@ -327,16 +353,339 @@ class DatasetController extends ChangeNotifier {
     await _saveDrafts([...previous.drafts.where((d) => d.id != key), draft]);
   }
 
-  Future<void> queueDraft(String draftId) async {
-    final drafts = snapshot?.drafts;
-    if (drafts == null) throw const DatasetStorageFailure('storage-closed');
-    if (drafts.any(
-      (d) => d.id == draftId && d.status == DraftStatus.conflict,
+  /// Owner working topics include explicit pending changes; Collector taxonomy
+  /// is always the minimal nondeleted server projection, without local Topic ops.
+  List<TopicTaxonomy> get topics {
+    final current = snapshot;
+    if (current == null || scope == null) return const [];
+    final owner = scope!.role == 'owner_admin';
+    final pending = owner
+        ? {
+            for (final d in current.drafts.where(
+              (d) => d.resourceType == 'topic',
+            ))
+              d.resourceId: d,
+          }
+        : <String, LocalDraft>{};
+    final result = <TopicTaxonomy>[];
+    for (final record in current.records.where(
+      (r) => r['resourceType'] == 'topic',
     )) {
+      if (!owner && !{'active', 'hidden'}.contains(record['state'])) continue;
+      final id = record['id']! as String;
+      final draft = pending.remove(id);
+      final apply = draft != null && draft.status != DraftStatus.conflict;
+      final state = apply
+          ? switch (draft.action) {
+              'hide' || 'restore' => 'hidden',
+              'softDelete' => 'deleted',
+              _ => record['state']! as String,
+            }
+          : record['state']! as String;
+      result.add(
+        TopicTaxonomy(
+          id: id,
+          name: apply
+              ? draft.value['name'] as String? ??
+                    record['name'] as String? ??
+                    id
+              : record['name'] as String? ?? id,
+          state: state,
+          revision: record['revision']! as int,
+          pending: draft,
+        ),
+      );
+    }
+    for (final draft in pending.values.where((d) => d.action == 'create')) {
+      result.add(
+        TopicTaxonomy(
+          id: draft.resourceId,
+          name: draft.value['name']! as String,
+          state: 'active',
+          revision: 0,
+          pending: draft,
+        ),
+      );
+    }
+    result.sort(
+      (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()) != 0
+          ? a.name.toLowerCase().compareTo(b.name.toLowerCase())
+          : a.id.compareTo(b.id),
+    );
+    return List.unmodifiable(result);
+  }
+
+  List<TopicTaxonomy> get eligibleTopics =>
+      List.unmodifiable(topics.where((t) => t.eligible));
+
+  DatasetSnapshot _workingSnapshot({bool owner = false}) {
+    final current = snapshot;
+    if (current == null ||
+        scope == null ||
+        current.scope.namespace != scope!.namespace ||
+        !{DatasetPhase.ready, DatasetPhase.offline}.contains(phase)) {
+      throw const DatasetStorageFailure('storage-closed');
+    }
+    if (owner && scope!.role != 'owner_admin') {
+      throw const DatasetStorageFailure('forbidden');
+    }
+    return current;
+  }
+
+  String _name(String value) {
+    if (value.isEmpty ||
+        value.trim() != value ||
+        value.runes.any(
+          (rune) =>
+              rune <= 0x1f ||
+              rune >= 0x7f && rune <= 0x9f ||
+              rune >= 0xd800 && rune <= 0xdfff,
+        )) {
+      throw const DatasetStorageFailure('invalid-draft');
+    }
+    return value;
+  }
+
+  String _newId(String kind) {
+    final random = Random.secure();
+    return 'studio-$kind-${List.generate(16, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join()}';
+  }
+
+  Future<void> createTopic(String name) async {
+    final current = _workingSnapshot(owner: true);
+    final id = _newId('topic');
+    await _saveDrafts([
+      ...current.drafts,
+      LocalDraft(
+        id: jsonEncode(['topic', id]),
+        resourceType: 'topic',
+        resourceId: id,
+        action: 'create',
+        value: {'name': _name(name)},
+      ),
+    ]);
+  }
+
+  Future<void> renameTopic(String id, String name) async {
+    final current = _workingSnapshot(owner: true);
+    final existing = current.drafts
+        .where((d) => d.resourceType == 'topic' && d.resourceId == id)
+        .firstOrNull;
+    if (existing?.status == DraftStatus.conflict) {
       throw const DatasetStorageFailure('draft-conflict');
     }
+    if (existing != null && !{'create', 'update'}.contains(existing.action)) {
+      throw const DatasetStorageFailure('topic-pending-change');
+    }
+    final record = current.records
+        .where((r) => r['resourceType'] == 'topic' && r['id'] == id)
+        .firstOrNull;
+    if (record == null && existing?.action != 'create' ||
+        record != null && !{'active', 'hidden'}.contains(record['state'])) {
+      throw const DatasetStorageFailure('invalid-topic-state');
+    }
+    final draft =
+        existing?.copyWith(
+          value: {'name': _name(name)},
+          status: DraftStatus.draft,
+        ) ??
+        LocalDraft(
+          id: jsonEncode(['topic', id]),
+          resourceType: 'topic',
+          resourceId: id,
+          action: 'update',
+          baseRevision: record!['revision']! as int,
+          value: {'name': _name(name)},
+        );
+    await _saveDrafts([
+      ...current.drafts.where((d) => d.id != draft.id),
+      draft,
+    ]);
+  }
+
+  Future<void> hideTopic(String id) => _topicAction(id, 'hide');
+  Future<void> deleteTopic(String id) => _topicAction(id, 'softDelete');
+  Future<void> restoreTopic(String id) => _topicAction(id, 'restore');
+
+  bool _hasPendingChildren(DatasetSnapshot current, String topicId) {
+    final packs = current.records
+        .where((r) => r['resourceType'] == 'pack' && r['topicId'] == topicId)
+        .map((r) => r['id'])
+        .toSet();
+    return current.drafts.any(
+      (d) => d.resourceType == 'pack'
+          ? d.value['topicId'] == topicId || packs.contains(d.resourceId)
+          : d.resourceType == 'card' &&
+                (packs.contains(d.value['packId']) ||
+                    current.records.any(
+                      (r) =>
+                          r['resourceType'] == 'card' &&
+                          r['id'] == d.resourceId &&
+                          packs.contains(r['packId']),
+                    )),
+    );
+  }
+
+  Future<void> _topicAction(String id, String action) async {
+    final current = _workingSnapshot(owner: true);
+    if (current.drafts.any(
+      (d) => d.resourceType == 'topic' && d.resourceId == id,
+    )) {
+      throw const DatasetStorageFailure('topic-pending-change');
+    }
+    final record = current.records
+        .where((r) => r['resourceType'] == 'topic' && r['id'] == id)
+        .firstOrNull;
+    if (record == null ||
+        (action == 'hide'
+            ? record['state'] != 'active'
+            : action == 'restore'
+            ? record['state'] != 'deleted'
+            : !{'active', 'hidden'}.contains(record['state']))) {
+      throw const DatasetStorageFailure('invalid-topic-state');
+    }
+    if (action == 'softDelete' && _hasPendingChildren(current, id)) {
+      throw const DatasetStorageFailure('topic-has-pending-children');
+    }
+    await _saveDrafts([
+      ...current.drafts,
+      LocalDraft(
+        id: jsonEncode(['topic', id]),
+        resourceType: 'topic',
+        resourceId: id,
+        action: action,
+        baseRevision: record['revision']! as int,
+        value: {'name': record['name']! as String},
+      ),
+    ]);
+  }
+
+  Future<void> createPackDraft({
+    required String name,
+    required String topicId,
+  }) async {
+    final current = _workingSnapshot();
+    if (!eligibleTopics.any((t) => t.id == topicId)) {
+      throw const DatasetStorageFailure('topic-not-eligible');
+    }
+    final id = _newId('pack');
+    await _saveDrafts([
+      ...current.drafts,
+      LocalDraft(
+        id: jsonEncode(['pack', id]),
+        resourceType: 'pack',
+        resourceId: id,
+        action: 'create',
+        value: {'name': _name(name), 'topicId': topicId},
+      ),
+    ]);
+  }
+
+  Future<void> updatePackDraft(
+    String draftId, {
+    required String name,
+    required String topicId,
+  }) async {
+    final current = _workingSnapshot();
+    final draft = current.drafts.where((d) => d.id == draftId).firstOrNull;
+    if (draft == null ||
+        draft.resourceType != 'pack' ||
+        draft.action != 'create' ||
+        draft.baseRevision != null ||
+        current.records.any(
+          (r) => r['resourceType'] == 'pack' && r['id'] == draft.resourceId,
+        )) {
+      throw const DatasetStorageFailure('invalid-draft');
+    }
+    if (draft.status == DraftStatus.conflict) {
+      throw const DatasetStorageFailure('draft-conflict');
+    }
+    if (!eligibleTopics.any((t) => t.id == topicId)) {
+      throw const DatasetStorageFailure('topic-not-eligible');
+    }
     await _saveDrafts(
-      drafts
+      current.drafts
+          .map(
+            (d) => d.id == draftId
+                ? d.copyWith(
+                    value: {'name': _name(name), 'topicId': topicId},
+                    status: DraftStatus.draft,
+                  )
+                : d,
+          )
+          .toList(),
+    );
+  }
+
+  void _validateQueuedDraft(LocalDraft draft) {
+    final current = _workingSnapshot(owner: draft.resourceType == 'topic');
+    final record = current.records
+        .where(
+          (r) =>
+              r['resourceType'] == draft.resourceType &&
+              r['id'] == draft.resourceId,
+        )
+        .firstOrNull;
+    if (draft.status == DraftStatus.conflict ||
+        (draft.action == 'create'
+            ? record != null || draft.baseRevision != null
+            : record == null || record['revision'] != draft.baseRevision)) {
+      throw const DatasetStorageFailure('draft-conflict');
+    }
+    if (draft.action == 'update' &&
+        record != null &&
+        (draft.resourceType == 'pack' &&
+                draft.value['topicId'] != record['topicId'] ||
+            draft.resourceType == 'card' &&
+                draft.value['packId'] != record['packId'])) {
+      throw const DatasetStorageFailure('invalid-draft');
+    }
+    if (draft.resourceType == 'topic') {
+      if (draft.value.keys.length != 1 ||
+          !draft.value.containsKey('name') ||
+          draft.value['name'] is! String) {
+        throw const DatasetStorageFailure('invalid-draft');
+      }
+      _name(draft.value['name']! as String);
+      if (draft.action == 'hide' && record?['state'] != 'active' ||
+          draft.action == 'restore' && record?['state'] != 'deleted' ||
+          {'update', 'softDelete'}.contains(draft.action) &&
+              !{'active', 'hidden'}.contains(record?['state'])) {
+        throw const DatasetStorageFailure('invalid-topic-state');
+      }
+      if (!{
+        'create',
+        'update',
+        'hide',
+        'softDelete',
+        'restore',
+      }.contains(draft.action)) {
+        throw const DatasetStorageFailure('invalid-draft');
+      }
+      if (draft.action == 'softDelete' &&
+          _hasPendingChildren(current, draft.resourceId)) {
+        throw const DatasetStorageFailure('topic-has-pending-children');
+      }
+    } else if (draft.resourceType == 'pack' && draft.action == 'create') {
+      if (draft.value.keys.length != 2 ||
+          draft.value['name'] is! String ||
+          draft.value['topicId'] is! String) {
+        throw const DatasetStorageFailure('invalid-draft');
+      }
+      _name(draft.value['name']! as String);
+      if (!eligibleTopics.any((t) => t.id == draft.value['topicId'])) {
+        throw const DatasetStorageFailure('topic-not-eligible');
+      }
+    }
+  }
+
+  Future<void> queueDraft(String draftId) async {
+    final current = _workingSnapshot();
+    final draft = current.drafts.where((d) => d.id == draftId).firstOrNull;
+    if (draft == null) throw const DatasetStorageFailure('invalid-draft');
+    _validateQueuedDraft(draft);
+    await _saveDrafts(
+      current.drafts
           .map(
             (d) => d.id == draftId ? d.copyWith(status: DraftStatus.unsent) : d,
           )
@@ -345,9 +694,11 @@ class DatasetController extends ChangeNotifier {
   }
 
   Future<void> discardDraft(String draftId) async {
-    final drafts = snapshot?.drafts;
-    if (drafts == null) throw const DatasetStorageFailure('storage-closed');
-    await _saveDrafts(drafts.where((d) => d.id != draftId).toList());
+    final current = _workingSnapshot();
+    final draft = current.drafts.where((d) => d.id == draftId).firstOrNull;
+    if (draft == null) throw const DatasetStorageFailure('invalid-draft');
+    _workingSnapshot(owner: draft.resourceType == 'topic');
+    await _saveDrafts(current.drafts.where((d) => d.id != draftId).toList());
   }
 
   String _code(Object error) => switch (error) {

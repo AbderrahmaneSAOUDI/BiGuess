@@ -43,6 +43,7 @@ class LocalDraft {
     required this.resourceId,
     required Map<String, Object?> value,
     this.baseRevision,
+    this.action = 'update',
     this.status = DraftStatus.draft,
     this.publishedRevision,
   }) : value = Map.unmodifiable(value);
@@ -50,6 +51,7 @@ class LocalDraft {
   final String resourceType;
   final String resourceId;
   final int? baseRevision;
+  final String action;
   final Map<String, Object?> value;
   final DraftStatus status;
   final int? publishedRevision;
@@ -63,6 +65,7 @@ class LocalDraft {
     resourceType: resourceType,
     resourceId: resourceId,
     baseRevision: baseRevision,
+    action: action,
     value: value ?? this.value,
     status: status ?? this.status,
     publishedRevision: publishedRevision ?? this.publishedRevision,
@@ -73,6 +76,7 @@ class LocalDraft {
     'resourceType': resourceType,
     'resourceId': resourceId,
     'baseRevision': baseRevision,
+    'action': action,
     'value': value,
     'status': status.name,
     'publishedRevision': publishedRevision,
@@ -83,6 +87,7 @@ class LocalDraft {
           'resourceType',
           'resourceId',
           'baseRevision',
+          'action',
           'value',
           'status',
           'publishedRevision',
@@ -94,6 +99,14 @@ class LocalDraft {
         (json['resourceId'] as String).isEmpty ||
         json['value'] is! Map ||
         !DraftStatus.values.any((state) => state.name == json['status']) ||
+        (json['action'] != null &&
+            !{
+              'create',
+              'update',
+              'hide',
+              'softDelete',
+              'restore',
+            }.contains(json['action'])) ||
         !_revision(json['baseRevision']) ||
         !_revision(json['publishedRevision'])) {
       throw const FormatException('Invalid local draft');
@@ -104,6 +117,7 @@ class LocalDraft {
       resourceId: json['resourceId']! as String,
       value: _map(json['value']),
       baseRevision: json['baseRevision'] as int?,
+      action: json['action'] as String? ?? 'update',
       status: DraftStatus.values.byName(json['status']! as String),
       publishedRevision: json['publishedRevision'] as int?,
     );

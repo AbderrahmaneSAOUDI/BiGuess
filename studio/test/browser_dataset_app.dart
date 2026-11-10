@@ -17,7 +17,7 @@ import 'package:web/web.dart' as web;
 class FixtureIdentity implements StudioIdentity {
   FixtureIdentity() {
     final requested = Uri.base.queryParameters['account'];
-    if (requested != null && {'a', 'b', 'new'}.contains(requested)) {
+    if (requested != null && {'a', 'b', 'new', 'owner'}.contains(requested)) {
       web.window.sessionStorage.setItem(_key, requested);
       web.window.history.replaceState(null, '', web.window.location.pathname);
     }

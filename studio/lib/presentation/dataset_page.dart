@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import '../app/studio_route.dart';
 import '../data/dataset_controller.dart';
 import '../data/studio_dataset.dart';
+import 'topics_page.dart';
+import 'pack_draft_dialog.dart';
 
 /// First-sync workspace. Full Topic/Pack/Card authoring remains in later tickets.
 class DatasetPage extends StatelessWidget {
@@ -96,11 +98,21 @@ class DatasetPage extends StatelessWidget {
                 'supplied by the administrative dataset.',
               ),
             ],
-            if ({
-              StudioRoute.topics,
-              StudioRoute.myPacks,
-              StudioRoute.cards,
-            }.contains(route))
+            if (route == StudioRoute.topics) TopicsPage(controller: controller),
+            if (route == StudioRoute.myPacks) ...[
+              Align(
+                alignment: Alignment.centerLeft,
+                child: FilledButton.tonal(
+                  onPressed: () => showDialog<void>(
+                    context: context,
+                    builder: (_) => PackDraftDialog(controller: controller),
+                  ),
+                  child: const Text('New Pack draft'),
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+            if ({StudioRoute.myPacks, StudioRoute.cards}.contains(route))
               _RecordList(controller: controller, route: route),
             if (route == StudioRoute.dashboard && snapshot.drafts.isNotEmpty)
               _DraftList(controller: controller, drafts: snapshot.drafts),
@@ -212,6 +224,15 @@ class _DraftList extends StatelessWidget {
                   DraftStatus.conflict => 'Conflict — review before queueing',
                 }),
                 Text(
+                  'Pending change: ${switch (draft.action) {
+                    'create' => 'Create',
+                    'hide' => 'Hide',
+                    'softDelete' => 'Delete',
+                    'restore' => 'Restore',
+                    _ => 'Edit',
+                  }}',
+                ),
+                Text(
                   'Base revision: ${draft.baseRevision ?? 'new draft'} · '
                   'Published revision: ${draft.publishedRevision ?? 'unknown'}',
                 ),
@@ -226,9 +247,21 @@ class _DraftList extends StatelessWidget {
                         ),
                         child: const Text('Queue commit'),
                       ),
-                    if (draft.status != DraftStatus.conflict)
+                    if (draft.status != DraftStatus.conflict &&
+                        draft.resourceType != 'topic')
                       TextButton(
                         onPressed: () {
+                          if (draft.resourceType == 'pack' &&
+                              draft.action == 'create') {
+                            showDialog<void>(
+                              context: context,
+                              builder: (_) => PackDraftDialog(
+                                controller: controller,
+                                draft: draft,
+                              ),
+                            );
+                            return;
+                          }
                           final record = controller.snapshot!.records
                               .where(
                                 (record) =>

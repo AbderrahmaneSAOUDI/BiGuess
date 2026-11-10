@@ -216,3 +216,41 @@ that mode. Offline shell installation itself needs one successful online visit
 and enough browser storage. Firebase's SDK/session must also remain available.
 
 See [T28 verification and reproducible browser checks](T28-VERIFICATION.md).
+
+## Topic administration and classification (T29)
+
+Topics now use a local working view over the synchronized records and durable
+pending changes. Owner can search/filter Topics, create or rename one, hide an
+active Topic, and prepare confirmed soft deletion or restoration. Restoration
+returns the selected Topic to hidden state; it does not restore descendants or
+publish anything. Synced records and relationships remain intact until a later
+explicit server commit. Save locally and Queue Topic commit are separate actions;
+this ticket adds no mutation uploads, per-keystroke writes or publishing.
+
+Collectors receive only the permitted `id`, `name`, `state` and `revision`
+classification projection. They have no Topic management controls, and direct
+controller calls to change, queue or discard a Topic operation are also denied.
+Topic author/audit/count/child metadata is not part of the picker or Collector
+Topic list. Active and hidden Topics are eligible under the approved taxonomy
+contract; deleted, purged, unsynced new Topics and pending restorations are not.
+
+The reusable Topic picker is available from **My Packs → New Pack draft**, not
+only from the Topics screen. This small entry point saves a Pack name and one
+existing Topic ID locally, without assigning creator ownership or adding full
+Pack administration. Unsynced Pack drafts can change that classification before
+queueing; existing synced Packs cannot be moved between Topics. Topic deletion
+is blocked when local Pack/Card changes depend on it, and the picker excludes
+pending deletions. A refresh that removes a new Pack draft's parent marks it as
+Conflict. These checks run again on queueing and in storage transactions guarded
+against stale-tab writes.
+
+Each pending change carries its operation (`create`, `update`, `hide`,
+`softDelete` or `restore`) and the original revision. A Topic can have one final
+operation at a time; incompatible edits require discarding/completing the first
+change instead of silently losing it. Existing T28 name drafts read as `update`
+when the new field is absent. Older app versions may refuse newer operation
+metadata rather than reinterpret it; they do not delete those stored drafts.
+
+See [T29 verification](T29-VERIFICATION.md). Full Pack lifecycle, Card authoring
+and server mutation transport remain later tickets. The private Content Backend
+is not activated or deployed by this work.
