@@ -126,6 +126,40 @@ and active game resources until a safe point. Delta expiry/missing history is 40
 `delta_unavailable`; resolve a new full descriptor, never apply a partial delta.
 These are transport/install requirements for future clients, not a new client.
 
+### Optional compact target manifest reconstruction
+
+T43 clients may add `includeManifestPatch=1` to the exact-revision delta query.
+The parameter is optional, accepts only one occurrence with value `1`, and never
+changes the default v1 response shape for existing clients. Opt-in responses add
+`manifestPatch`; their ETag covers that representation's complete bytes and is
+distinct from the default representation's ETag. Visibility and stored-artifact
+checks still run before either representation may return 304.
+
+The patch contains `topic`, `pack`, `provenanceMode`, `packRights`,
+`upsertCardRights`, `cardOrder` and `objectOrder`, with no additional fields.
+Topic and Pack use the target manifest's existing shapes. Mode and Pack rights
+are the target values and must remain cleared. `upsertCardRights` contains only
+new or changed complete Card-rights records. The two order arrays contain the
+target Card IDs and object keys, respectively; unchanged Card metadata and image
+descriptors are retained locally rather than retransmitted.
+
+Starting from the verified base, remove `removeCardIds` and apply `upsertCards`;
+merge `objects` with the base's verified object descriptors; and merge changed
+rights with the base rights by Card ID. Select/order the resulting Cards and
+rights using `cardOrder`, and the objects using `objectOrder`, discarding base
+records no longer in those lists. Combine them with target Topic/Pack, schema
+version 1, kind `full`, and the supplied cleared provenance fields. Validate the
+complete reconstructed manifest and its canonical UTF-8/LF bytes against the
+target hash and pinned-key-verified T22 publication receipt before downloading
+missing objects or committing. A patch or ETag alone is not publisher trust.
+Reject duplicate/incomplete/cross-Pack/conflicting changes and unknown fields.
+
+This opt-in path does not fetch the full target manifest or archive during a
+normal delta update: only changed Card metadata/rights and newly required image
+bytes cross the wire, plus small target metadata and order lists needed to verify
+the exact signed representation. Existing full-manifest behavior remains valid
+for default clients and explicit full-download fallback after `delta_unavailable`.
+
 ## Revision checks and tombstones
 
 `POST /sync/revisions` submits 1–100 distinct installed Pack IDs and known

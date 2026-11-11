@@ -86,6 +86,20 @@ def validate(kind, payload):
             require(payload['toRevision'] > payload['fromRevision'], 'Delta must advance revision')
             require(not ({c['id'] for c in cards} & set(payload['removeCardIds'])), 'Conflicting Card operations')
             require({o['key'] for o in payload['objects']} <= {c['imageReference'] for c in cards}, 'Unused delta object')
+            if 'manifestPatch' in payload:
+                patch = payload['manifestPatch']
+                require(patch['pack']['id'] == pack_id, 'Patch Pack mismatch')
+                require(patch['pack']['revision'] == payload['toRevision'], 'Patch revision mismatch')
+                require(patch['pack']['topicId'] == patch['topic']['id'], 'Patch Topic mismatch')
+                unique(patch['upsertCardRights'], 'id')
+                target_ids = set(patch['cardOrder'])
+                require(not (set(payload['removeCardIds']) & target_ids), 'Removed Card in target order')
+                require({c['id'] for c in cards} <= target_ids, 'Upsert missing from target order')
+                require({r['id'] for r in patch['upsertCardRights']} <= target_ids, 'Rights missing from target order')
+                require({o['key'] for o in payload['objects']} <= set(patch['objectOrder']), 'Object missing from target order')
+                require(patch['cardOrder'] == sorted(patch['cardOrder']), 'Unsorted target Cards')
+                require(patch['objectOrder'] == sorted(patch['objectOrder']), 'Unsorted target objects')
+                require([r['id'] for r in patch['upsertCardRights']] == sorted(r['id'] for r in patch['upsertCardRights']), 'Unsorted changed rights')
     if kind == 'StudioBatch':
         aggregate = payload['aggregate']
         seen = set()

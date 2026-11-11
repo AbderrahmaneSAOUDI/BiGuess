@@ -4,7 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart' as hashes;
-import 'package:cryptography/cryptography.dart';
+import 'pack_publication_verifier.dart';
 
 import '../catalog/catalog_models.dart';
 import '../local/local_pack_file.dart';
@@ -149,7 +149,14 @@ class HttpPackDownloadRepository implements PackDownloadRepository {
           token: token,
         ),
       );
-      final statement = await _verifyReceipt(receipt, summary);
+      final statement = await verifyPackPublicationReceipt(
+        receipt,
+        pinnedKeys: pinnedKeys,
+        packId: summary.id,
+        topicId: summary.topicId,
+        revision: summary.revision,
+        manifestSha256: summary.manifestSha256,
+      );
       if (descriptor['archiveSha256'] != statement['archiveSha256'] ||
           descriptor['sizeBytes'] != statement['archiveSizeBytes']) {
         throw const PackDownloadFailure('corrupt');
@@ -274,84 +281,6 @@ class HttpPackDownloadRepository implements PackDownloadRepository {
         _busy = false;
       }
     }
-  }
-
-  Future<Map<String, dynamic>> _verifyReceipt(
-    Map<String, dynamic> receipt,
-    CatalogPackSummary summary,
-  ) async {
-    _record(receipt, {
-      'schemaVersion',
-      'algorithm',
-      'keyId',
-      'statement',
-      'signature',
-    });
-    final s = LocalPackManifest.object(receipt['statement']);
-    _record(s, {
-      'archiveSha256',
-      'archiveSizeBytes',
-      'domain',
-      'manifestSha256',
-      'manifestSizeBytes',
-      'packId',
-      'revision',
-      'topicId',
-    });
-    if (receipt['schemaVersion'] != 1 ||
-        receipt['schemaVersion'] is! int ||
-        receipt['algorithm'] != 'Ed25519' ||
-        receipt['signature'] is! String ||
-        s['domain'] != 'biguess-pack-publication-v1' ||
-        s['packId'] != summary.id ||
-        s['topicId'] != summary.topicId ||
-        s['revision'] != summary.revision ||
-        s['revision'] is! int ||
-        s['manifestSha256'] != summary.manifestSha256 ||
-        !_digest(s['archiveSha256']) ||
-        !_digest(receipt['keyId'])) {
-      throw const PackDownloadFailure('corrupt');
-    }
-    final encoded = pinnedKeys[receipt['keyId']];
-    if (encoded == null) throw const PackDownloadFailure('untrusted-key');
-    final spki = base64.decode(encoded);
-    const prefix = [
-      0x30,
-      0x2a,
-      0x30,
-      0x05,
-      0x06,
-      0x03,
-      0x2b,
-      0x65,
-      0x70,
-      0x03,
-      0x21,
-      0x00,
-    ];
-    if (spki.length != 44 ||
-        hashes.sha256.convert(spki).toString() != receipt['keyId'] ||
-        !List.generate(
-          prefix.length,
-          (i) => spki[i] == prefix[i],
-        ).every((v) => v)) {
-      throw const PackDownloadFailure('untrusted-key');
-    }
-    final signature = base64.decode(receipt['signature'] as String);
-    if (signature.length != 64) throw const PackDownloadFailure('corrupt');
-    // The publisher signs this exact fixed field order followed by one newline.
-    final bytes = utf8.encode(
-      '${jsonEncode({'archiveSha256': s['archiveSha256'], 'archiveSizeBytes': s['archiveSizeBytes'], 'domain': s['domain'], 'manifestSha256': s['manifestSha256'], 'manifestSizeBytes': s['manifestSizeBytes'], 'packId': s['packId'], 'revision': s['revision'], 'topicId': s['topicId']})}\n',
-    );
-    final valid = await Ed25519().verify(
-      bytes,
-      signature: Signature(
-        signature,
-        publicKey: SimplePublicKey(spki.sublist(12), type: KeyPairType.ed25519),
-      ),
-    );
-    if (!valid) throw const PackDownloadFailure('corrupt');
-    return s;
   }
 
   Future<Uint8List> _bytes(

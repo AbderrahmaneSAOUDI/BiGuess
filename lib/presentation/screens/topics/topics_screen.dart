@@ -6,6 +6,8 @@ import '../../../core/constants/app_constants.dart';
 import '../../../domain/models/update_decision.dart';
 import '../../../domain/models/update_state.dart';
 import '../../../providers/topic_pack_providers.dart';
+import '../../../providers/pack_update_controller.dart';
+import '../packs/installed_packs_screen.dart';
 import '../../../providers/catalog_controller.dart';
 import '../../widgets/common/catalog_status.dart';
 import '../../../providers/theme_controller.dart';
@@ -81,6 +83,7 @@ class _TopicsScreenState extends ConsumerState<TopicsScreen> {
     final repository = ref.watch(contentRepositoryProvider);
     final topics = ref.watch(browseTopicsProvider);
     final catalog = ref.watch(catalogBrowseProvider).snapshot;
+    final installedDownloads = ref.watch(installedDownloadPacksProvider);
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final themeMode = ref.watch(themeNotifierProvider);
@@ -121,7 +124,27 @@ class _TopicsScreenState extends ConsumerState<TopicsScreen> {
               padding: EdgeInsets.fromLTRB(20, topPadding, 20, 32),
               itemCount: topics.length + 1,
               itemBuilder: (context, index) {
-                if (index == 0) return const CatalogStatus();
+                if (index == 0) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const CatalogStatus(),
+                      if (installedDownloads.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 16),
+                          child: OutlinedButton.icon(
+                            onPressed: () => Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (_) => const InstalledPacksScreen(),
+                              ),
+                            ),
+                            icon: const Icon(Icons.inventory_2_outlined),
+                            label: const Text('Manage installed Packs'),
+                          ),
+                        ),
+                    ],
+                  );
+                }
                 final browsing = topics[index - 1];
                 final selectedTopic = browsing.topic;
                 final topic = selectedTopic.name;

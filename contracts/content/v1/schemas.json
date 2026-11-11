@@ -711,6 +711,9 @@
             "$ref": "#/$defs/ImageObject"
           },
           "minItems": 0
+        },
+        "manifestPatch": {
+          "$ref": "#/$defs/ManifestPatch"
         }
       }
     },
@@ -1472,6 +1475,57 @@
           }
         }
       ]
+    },
+    "ManifestPatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Returned only when includeManifestPatch=1. Reconstruct and verify the exact signed target manifest using installed base records plus the delta; this patch is not independently trusted.",
+      "required": [
+        "topic",
+        "pack",
+        "provenanceMode",
+        "packRights",
+        "upsertCardRights",
+        "cardOrder",
+        "objectOrder"
+      ],
+      "properties": {
+        "topic": {
+          "$ref": "#/$defs/Manifest/properties/topic"
+        },
+        "pack": {
+          "$ref": "#/$defs/Manifest/properties/pack"
+        },
+        "provenanceMode": {
+          "type": "string",
+          "const": "cleared-test"
+        },
+        "packRights": {
+          "$ref": "#/$defs/Provenance/oneOf/0/properties/packRights"
+        },
+        "upsertCardRights": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Provenance/oneOf/0/properties/cardRights/items"
+          }
+        },
+        "cardOrder": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Id"
+          },
+          "minItems": 2,
+          "uniqueItems": true
+        },
+        "objectOrder": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ObjectKey"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      }
     }
   }
 }

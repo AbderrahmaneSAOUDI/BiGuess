@@ -8,6 +8,7 @@ import '../../../providers/entitlement_provider.dart';
 import '../../../providers/game_session_controller.dart';
 import '../../../providers/gameplay_network_gate.dart';
 import '../../../providers/pack_download_controller.dart';
+import '../../../providers/pack_update_controller.dart';
 import '../../../providers/catalog_controller.dart';
 import '../../controllers/update_controller.dart';
 import '../../../providers/game_settings_controller.dart';
@@ -77,12 +78,18 @@ class _GameConfigurationScreenState
       final stopped = ref
           .read(packDownloadsProvider.notifier)
           .stopForGameplay();
+      final updatesStopped = ref
+          .read(packUpdatesProvider.notifier)
+          .stopForGameplay();
       ref.invalidate(publicCatalogRepositoryProvider);
       ref.read(publicCatalogRepositoryProvider);
       ref.invalidate(packDownloadRepositoryProvider);
       ref.read(packDownloadRepositoryProvider);
+      ref.invalidate(packUpdateRepositoryProvider);
+      ref.read(packUpdateRepositoryProvider);
       await Future.wait([
         stopped,
+        updatesStopped,
         ref.read(updateControllerProvider.notifier).pauseForGameplay(),
       ]);
       if (!mounted) return;

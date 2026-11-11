@@ -41,7 +41,7 @@ class ContentContractTests(unittest.TestCase):
                     self.assertIn(target.split('#')[0], ('', './schemas.json'))
                     node = contract.SCHEMA
                     for key in target.split('#/')[1].split('/'):
-                        node = node[key]
+                        node = node[int(key)] if isinstance(node, list) else node[key]
                 for child in value.values():
                     walk(child)
             elif isinstance(value, list):
@@ -105,6 +105,52 @@ class ContentContractTests(unittest.TestCase):
         self.assertEqual([], delta['objects'])
         self.assertEqual(baseline['objects'], target['objects'])
         self.assertEqual(exporter.sha256(exporter.canonical_json(target)), delta['targetManifestSha256'])
+
+    def test_opt_in_manifest_patch_reconstructs_signed_target_without_unchanged_card_records(self):
+        target = fixture('manifest')['payload']
+        baseline = fixture('delta-base-manifest')['payload']
+        delta = copy.deepcopy(fixture('delta')['payload'])
+        old_rights = {r['id']: r for r in baseline['provenance']['cardRights']}
+        delta['manifestPatch'] = {
+            'topic': target['topic'], 'pack': target['pack'],
+            'provenanceMode': target['provenance']['mode'],
+            'packRights': target['provenance']['packRights'],
+            'upsertCardRights': [r for r in target['provenance']['cardRights'] if old_rights.get(r['id']) != r],
+            'cardOrder': [c['id'] for c in target['cards']],
+            'objectOrder': [o['key'] for o in target['objects']],
+        }
+        contract.validate('Delta', delta)
+        patch = delta['manifestPatch']
+        cards = {c['id']: c for c in baseline['cards']}
+        for card_id in delta['removeCardIds']:
+            del cards[card_id]
+        cards.update({c['id']: c for c in delta['upsertCards']})
+        objects = {o['key']: o for o in [*baseline['objects'], *delta['objects']]}
+        rights = {r['id']: r for r in [*baseline['provenance']['cardRights'], *patch['upsertCardRights']]}
+        rebuilt = {'schemaVersion': 1, 'kind': 'full', 'topic': patch['topic'], 'pack': patch['pack'],
+                   'cards': [cards[card_id] for card_id in patch['cardOrder']],
+                   'objects': [objects[key] for key in patch['objectOrder']],
+                   'provenance': {'mode': patch['provenanceMode'], 'packRights': patch['packRights'],
+                                  'cardRights': [rights[card_id] for card_id in patch['cardOrder']]}}
+        self.assertEqual(rebuilt, target)
+        self.assertEqual(exporter.sha256(exporter.canonical_json(rebuilt)), delta['targetManifestSha256'])
+        for field, value in [('provenanceMode', 'legacy-development'),
+                             ('cardOrder', patch['cardOrder'] + [patch['cardOrder'][0]]),
+                             ('objectOrder', patch['objectOrder'] + [patch['objectOrder'][0]]),
+                             ('actorId', 'private-owner')]:
+            broken = copy.deepcopy(delta)
+            broken['manifestPatch'][field] = value
+            with self.subTest(field=field), self.assertRaises((ValidationError, ValueError)):
+                contract.validate('Delta', broken)
+        for field, value in [('id', 'different-pack'), ('topicId', 'different-topic'), ('revision', delta['toRevision'] + 1)]:
+            broken = copy.deepcopy(delta)
+            broken['manifestPatch']['pack'][field] = value
+            with self.subTest(field=field), self.assertRaises((ValidationError, ValueError)):
+                contract.validate('Delta', broken)
+        broken = copy.deepcopy(delta)
+        broken['removeCardIds'] = [patch['cardOrder'][0]]
+        with self.assertRaises(ValueError):
+            contract.validate('Delta', broken)
 
     def test_required_fields_cannot_be_omitted(self):
         for path in FIXTURES.glob('*.json'):

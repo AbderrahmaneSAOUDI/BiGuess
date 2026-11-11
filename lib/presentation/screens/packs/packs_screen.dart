@@ -205,16 +205,11 @@ class _PacksScreenState extends ConsumerState<PacksScreen> {
                               downloadAction:
                                   downloadable[pack.id] != null &&
                                       !option.unavailableOnline &&
-                                      ((!option.installed &&
-                                              option.availability ==
-                                                  PackAvailability
-                                                      .downloadRequired) ||
-                                          (option.installed &&
-                                              downloadable[pack.id]!.revision >
-                                                  pack.revision))
+                                      !option.installed &&
+                                      option.availability ==
+                                          PackAvailability.downloadRequired
                                   ? PackDownloadAction(
                                       summary: downloadable[pack.id]!,
-                                      update: option.installed,
                                     )
                                   : null,
                               onTap:

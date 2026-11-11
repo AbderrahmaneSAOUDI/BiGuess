@@ -5,13 +5,8 @@ import '../../../data/catalog/catalog_models.dart';
 import '../../../providers/pack_download_controller.dart';
 
 class PackDownloadAction extends ConsumerWidget {
-  const PackDownloadAction({
-    super.key,
-    required this.summary,
-    this.update = false,
-  });
+  const PackDownloadAction({super.key, required this.summary});
   final CatalogPackSummary summary;
-  final bool update;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -35,8 +30,6 @@ class PackDownloadAction extends ConsumerWidget {
             ? 'Queued'
             : state.busy
             ? 'Progress'
-            : update
-            ? 'Download update'
             : 'Download',
       ),
     );

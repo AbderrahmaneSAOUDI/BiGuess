@@ -760,6 +760,18 @@
             "description": "toRevision"
           },
           {
+            "name": "includeManifestPatch",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "enum": [
+                1
+              ]
+            },
+            "description": "Opt in with exactly 1 to reconstruct the signed target manifest from the verified base and only changed records. Absent preserves the original v1 response shape."
+          },
+          {
             "name": "If-None-Match",
             "in": "header",
             "required": false,

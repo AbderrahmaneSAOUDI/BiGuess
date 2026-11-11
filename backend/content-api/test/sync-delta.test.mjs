@@ -46,6 +46,19 @@ second.pack.name = 'Other Shapes';
 second.cards = second.cards.map(c => ({ ...c, id: `second:${c.id}`, pack_id: secondPackId }));
 fixtures.set('second', exportFixture('second', 1, second));
 fixtures.set('restored', exportFixture('restored', 5, JSON.parse(readFileSync(join(fixtureRoot, 'pack.json')))));
+const rightsOnly = JSON.parse(readFileSync(join(fixtureRoot, 'pack.json')));
+rightsOnly.cards[0].attribution = 'BiGuess Engineering Revised Attribution';
+fixtures.set('rights-only', exportFixture('rights-only', 2, rightsOnly));
+const largePackId = 'pack:large-shapes';
+execFileSync('python3', ['-c', 'from PIL import Image; import pathlib,sys; root=pathlib.Path(sys.argv[1]); [(Image.new("RGB",(16,16),(i,i*3%256,i*7%256)).save(root/f"Large{i:03}.webp",format="WEBP",lossless=True)) for i in range(105)]', fixtureRoot]);
+const large = JSON.parse(readFileSync(join(fixtureRoot, 'pack.json')));
+large.pack.id = largePackId;
+large.pack.name = 'Large Cleared Shapes';
+large.cards = Array.from({ length: 105 }, (_, i) => ({ ...large.cards[0],
+  id: `large:card:${String(i).padStart(3, '0')}`, pack_id: largePackId,
+  name: `Cleared shape ${i}`, image: `Large${String(i).padStart(3, '0')}.webp` }));
+fixtures.set('large-base', exportFixture('large-base', 1, { ...large, cards: large.cards.slice(0, 100) }));
+fixtures.set('large-target', exportFixture('large-target', 2, large));
 const manifests = new Map([...fixtures].map(([revision, bundle]) => [revision,
   JSON.parse(Buffer.from(bundle.manifest, 'base64'))]));
 execFileSync(process.execPath, ['node_modules/wrangler/bin/wrangler.js', 'deploy', 'test/publication-worker.ts',
@@ -92,6 +105,7 @@ async function setup(t) {
   const sync = (packs, options = {}) => request('/content/v1/sync/revisions', {
     method: 'POST', body: JSON.stringify({ protocolVersion: 1, packs }), ...options });
   const delta = (from, to, options = {}) => request(`/content/v1/packs/${encodeURIComponent(packId)}/delta?fromRevision=${from}&toRevision=${to}`, options);
+  const compactDelta = (from, to, options = {}, id = packId) => request(`/content/v1/packs/${encodeURIComponent(id)}/delta?fromRevision=${from}&toRevision=${to}&includeManifestPatch=1`, options);
   const commit = (resourceType, id, operations, revision, actor = 'owner') => request('/studio/v1/batches', {
     method: 'POST', headers: { Authorization: `Bearer ${tokens[actor]}`, 'Idempotency-Key': randomUUID(), 'If-Match': `"rev-${revision}"` },
     body: JSON.stringify({ protocolVersion: 1, aggregate: { resourceType, id }, operations }),
@@ -100,7 +114,7 @@ async function setup(t) {
   async function publishThrough(revision) {
     for (let i = 1; i <= revision; i++) await success(await publish(i, i - 1));
   }
-  return { db, bucket, request, publish, known, sync, delta, commit, action, publishThrough };
+  return { db, bucket, request, publish, known, sync, delta, compactDelta, commit, action, publishThrough };
 }
 async function success(response) {
   assert.equal(response.status, 200, await response.clone().text());
@@ -129,6 +143,74 @@ async function deltaBody(response) {
   const body = JSON.parse(raw); validate('Delta', body);
   return body;
 }
+const canonical = value => {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+  if (value && typeof value === 'object') return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
+  return JSON.stringify(value);
+};
+function reconstruct(base, delta) {
+  const patch = delta.manifestPatch;
+  const cards = new Map(base.cards.map(card => [card.id, card]));
+  for (const id of delta.removeCardIds) cards.delete(id);
+  for (const card of delta.upsertCards) cards.set(card.id, card);
+  const objects = new Map([...base.objects, ...delta.objects].map(object => [object.key, object]));
+  const rights = new Map([...base.provenance.cardRights, ...patch.upsertCardRights].map(row => [row.id, row]));
+  return { schemaVersion: 1, kind: 'full', topic: patch.topic, pack: patch.pack,
+    cards: patch.cardOrder.map(id => cards.get(id)), objects: patch.objectOrder.map(key => objects.get(key)),
+    provenance: { mode: patch.provenanceMode, packRights: patch.packRights,
+      cardRights: patch.cardOrder.map(id => rights.get(id)) } };
+}
+
+test('opt-in compact delta reconstructs 100 to 105 Cards with only five changed records and images', async t => {
+  const { publish, compactDelta, request } = await setup(t);
+  await success(await publish('large-base', 0)); await success(await publish('large-target', 1));
+  const change = await deltaBody(await compactDelta(1, 2, {}, largePackId));
+  assert.equal(change.upsertCards.length, 5);
+  assert.equal(change.objects.length, 5);
+  assert.equal(change.manifestPatch.upsertCardRights.length, 5);
+  assert.equal(change.manifestPatch.cardOrder.length, 105);
+  assert.equal(change.manifestPatch.objectOrder.length, 105);
+  assert.equal('cards' in change.manifestPatch, false);
+  assert.equal('cardRights' in change.manifestPatch, false);
+  const rebuilt = reconstruct(manifests.get('large-base'), change);
+  validate('PublicManifest', rebuilt);
+  assert.deepEqual(rebuilt, manifests.get('large-target'));
+  assert.equal(hash(Buffer.from(canonical(rebuilt) + '\n')), change.targetManifestSha256);
+  const oldKeys = new Set(manifests.get('large-base').objects.map(o => o.key));
+  assert.ok(change.objects.every(o => !oldKeys.has(o.key)));
+  for (const object of change.objects) {
+    const response = await success(await request(new URL(object.key, change.targetManifestUrl).pathname));
+    const bytes = Buffer.from(await response.arrayBuffer());
+    assert.equal(hash(bytes), object.sha256); assert.equal(bytes.length, object.sizeBytes);
+  }
+});
+
+test('compact metadata and rights-only patches preserve default v1 shape and reconstruct exact signed provenance', async t => {
+  const { publish, delta, compactDelta } = await setup(t);
+  await success(await publish(1, 0)); await success(await publish('rights-only', 1));
+  const original = await deltaBody(await delta(1, 2));
+  assert.equal('manifestPatch' in original, false);
+  const change = await deltaBody(await compactDelta(1, 2));
+  assert.deepEqual(change.upsertCards, []); assert.deepEqual(change.objects, []);
+  assert.equal(change.manifestPatch.upsertCardRights.length, 1);
+  const rebuilt = reconstruct(manifests.get(1), change);
+  assert.deepEqual(rebuilt, manifests.get('rights-only'));
+  assert.equal(hash(Buffer.from(canonical(rebuilt) + '\n')), change.targetManifestSha256);
+});
+
+test('compact delta ETags identify the opt-in representation and still enforce visibility before 304', async t => {
+  const { publishThrough, delta, compactDelta, db } = await setup(t); await publishThrough(2);
+  const legacy = await success(await delta(1, 2));
+  const first = await success(await compactDelta(1, 2));
+  const etag = first.headers.get('ETag');
+  assert.notEqual(etag, legacy.headers.get('ETag'));
+  const body = await first.json();
+  assert.deepEqual(body.manifestPatch.upsertCardRights, []);
+  assert.equal((await compactDelta(1, 2, { headers: { 'If-None-Match': etag } })).status, 304);
+  assert.equal((await compactDelta(1, 2, { headers: { 'If-None-Match': legacy.headers.get('ETag') } })).status, 200);
+  await db.exec('UPDATE catalog_packs SET published = 0');
+  await error(await compactDelta(1, 2, { headers: { 'If-None-Match': etag } }), 403, 'unavailable');
+});
 
 test('anonymous revision checks distinguish unchanged, updates and unknown IDs with exactly one result per request', async t => {
   const { publishThrough, sync, known } = await setup(t); await publishThrough(2);
@@ -238,7 +320,10 @@ test('delta request validation rejects bad ranges and returns an explicit full-d
     await error(await delta(from, to), 400, 'invalid_request');
   }
   const path = `/content/v1/packs/${packId}/delta`;
-  for (const query of ['', '?fromRevision=1', '?fromRevision=1&toRevision=2&x=1', '?fromRevision=1&fromRevision=1&toRevision=2']) {
+  for (const query of ['', '?fromRevision=1', '?fromRevision=1&toRevision=2&x=1', '?fromRevision=1&fromRevision=1&toRevision=2',
+    '?fromRevision=1&toRevision=2&includeManifestPatch=0', '?fromRevision=1&toRevision=2&includeManifestPatch=',
+    '?fromRevision=1&toRevision=2&includeManifestPatch=true', '?fromRevision=1&toRevision=2&includeManifestPatch=01',
+    '?fromRevision=1&toRevision=2&includeManifestPatch=1&includeManifestPatch=1']) {
     await error(await request(path + query), 400, 'invalid_request');
   }
   await error(await delta(1, 9), 409, 'delta_unavailable');

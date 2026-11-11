@@ -121,8 +121,10 @@ async function delta(request: Request, env: Env, match: RegExpExecArray): Promis
   try { packId = decodeURIComponent(match[1]); } catch { return error(400, 'invalid_request', 'Invalid Pack ID.'); }
   if (!validId(packId)) return error(400, 'invalid_request', 'Invalid Pack ID.');
   const fromRaw = url.searchParams.get('fromRevision'); const toRaw = url.searchParams.get('toRevision');
-  if ([...url.searchParams.keys()].some(k => !['fromRevision', 'toRevision'].includes(k))
+  const patchRaw = url.searchParams.get('includeManifestPatch');
+  if ([...url.searchParams.keys()].some(k => !['fromRevision', 'toRevision', 'includeManifestPatch'].includes(k))
     || url.searchParams.getAll('fromRevision').length !== 1 || url.searchParams.getAll('toRevision').length !== 1
+    || url.searchParams.getAll('includeManifestPatch').length > 1 || (patchRaw !== null && patchRaw !== '1')
     || !/^[1-9][0-9]*$/.test(fromRaw ?? '') || !/^[1-9][0-9]*$/.test(toRaw ?? '')
     || !revision(Number(fromRaw)) || !revision(Number(toRaw)) || Number(fromRaw) >= Number(toRaw)) {
     return error(400, 'invalid_request', 'Specify exact positive revisions with fromRevision less than toRevision.');
@@ -160,11 +162,23 @@ async function delta(request: Request, env: Env, match: RegExpExecArray): Promis
     const oldObjects = new Set(base.objects.map(o => o.key));
     const upsertCards = target.cards.filter(c => !oldCards.has(c.id) || !sameCard(oldCards.get(c.id)!, c));
     const requiredObjects = new Set(upsertCards.map(c => c.imageReference));
+    const oldRights = new Map(base.provenance.cardRights.map(r => [r.id, r]));
+    // Opt-in only: old v1 consumers retain their exact response shape. The
+    // compact patch lets a client reconstruct the signed canonical manifest
+    // without retransmitting unchanged Card records or image descriptors.
+    const manifestPatch = patchRaw === '1' ? {
+      topic: target.topic, pack: target.pack,
+      provenanceMode: target.provenance.mode, packRights: target.provenance.packRights,
+      upsertCardRights: target.provenance.cardRights.filter(r => !oldRights.has(r.id)
+        || JSON.stringify(oldRights.get(r.id)) !== JSON.stringify(r)),
+      cardOrder: target.cards.map(c => c.id), objectOrder: target.objects.map(o => o.key),
+    } : null;
     const body = JSON.stringify({ protocolVersion: 1, packId, fromRevision, toRevision,
       targetManifestSha256: targetReceipt.statement.manifestSha256,
       targetManifestUrl: `${url.origin}/content/v1/packs/${encodeURIComponent(packId)}/revisions/${toRevision}/manifest`,
       upsertCards, removeCardIds: base.cards.filter(c => !newIds.has(c.id)).map(c => c.id),
       objects: target.objects.filter(o => requiredObjects.has(o.key) && !oldObjects.has(o.key)),
+      ...(manifestPatch ? { manifestPatch } : {}),
     });
     const etag = `"${await hash(new TextEncoder().encode(body))}"`;
     const headers = { ...cors, ETag: etag, 'Cache-Control': 'public, max-age=60, must-revalidate',

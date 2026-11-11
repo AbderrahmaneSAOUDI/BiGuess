@@ -9,6 +9,7 @@ import '../data/download/pack_download_repository.dart';
 import 'catalog_controller.dart';
 import 'topic_pack_providers.dart';
 import 'gameplay_network_gate.dart';
+import 'content_transfer_gate.dart';
 
 /// Build-pinned public SPKI keys, never learned from downloaded content.
 final packDownloadKeysProvider = Provider<Map<String, String>>((ref) {
@@ -96,6 +97,10 @@ class PackDownloadController extends Notifier<Map<String, PackDownloadState>> {
       _set(summary.id, const PackDownloadState(error: 'gameplay-active'));
       return Future.value();
     }
+    if (_active == null && ref.read(contentTransferOwnerProvider) != null) {
+      _set(summary.id, const PackDownloadState(error: 'transfer-busy'));
+      return Future.value();
+    }
     final active = _active;
     if (active?.summary.id == summary.id) return active!.done.future;
     for (final job in _queue) {
@@ -168,6 +173,13 @@ class PackDownloadController extends Notifier<Map<String, PackDownloadState>> {
 
   Future<void> _perform(_PackDownloadJob job) async {
     final summary = job.summary;
+    final lease = ref.read(contentTransferOwnerProvider.notifier);
+    if (lease.state != null) {
+      _set(summary.id, const PackDownloadState(error: 'transfer-busy'));
+      return;
+    }
+    final owner = Object();
+    lease.state = owner;
     _set(summary.id, const PackDownloadState(busy: true));
     try {
       final repository = ref.read(packDownloadRepositoryProvider);
@@ -205,6 +217,8 @@ class PackDownloadController extends Notifier<Map<String, PackDownloadState>> {
       _set(summary.id, PackDownloadState(error: error.code));
     } catch (_) {
       _set(summary.id, const PackDownloadState(error: 'download-failed'));
+    } finally {
+      if (lease.mounted && identical(lease.state, owner)) lease.state = null;
     }
   }
 }
