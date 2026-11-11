@@ -8,6 +8,7 @@ import '../data/catalog/catalog_models.dart';
 import '../data/download/pack_download_repository.dart';
 import 'catalog_controller.dart';
 import 'topic_pack_providers.dart';
+import 'gameplay_network_gate.dart';
 
 /// Build-pinned public SPKI keys, never learned from downloaded content.
 final packDownloadKeysProvider = Provider<Map<String, String>>((ref) {
@@ -28,6 +29,7 @@ final packDownloadKeysProvider = Provider<Map<String, String>>((ref) {
 });
 
 final packDownloadRepositoryProvider = Provider<PackDownloadRepository?>((ref) {
+  if (ref.watch(gameplayNetworkBlockedProvider)) return null;
   final base = ref.watch(publicCatalogBaseUriProvider);
   final store = ref.watch(localContentRuntimeProvider)?.store;
   if (base == null || store == null) return null;
@@ -90,6 +92,10 @@ class PackDownloadController extends Notifier<Map<String, PackDownloadState>> {
   /// jobs are memory-only: a restart requires a new user action, never HTTP.
   Future<void> download(CatalogPackSummary summary) {
     if (!_alive) return Future.value();
+    if (ref.read(gameplayNetworkBlockedProvider)) {
+      _set(summary.id, const PackDownloadState(error: 'gameplay-active'));
+      return Future.value();
+    }
     final active = _active;
     if (active?.summary.id == summary.id) return active!.done.future;
     for (final job in _queue) {
@@ -126,6 +132,18 @@ class PackDownloadController extends Notifier<Map<String, PackDownloadState>> {
       queued.cancellation.cancel();
       queued.done.complete();
       _set(packId, const PackDownloadState(error: 'cancelled'));
+    }
+  }
+
+  /// Drain cancellation/atomic completion before the session's Start boundary.
+  Future<void> stopForGameplay() async {
+    final active = _active;
+    for (final job in _queue.toList()) {
+      cancel(job.summary.id);
+    }
+    if (active != null) {
+      cancel(active.summary.id);
+      await active.done.future;
     }
   }
 

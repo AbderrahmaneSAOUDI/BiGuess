@@ -4,6 +4,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../../domain/models/topic.dart';
+import '../../domain/models/game_setup.dart';
 import '../../domain/repositories/content_repository.dart';
 import '../repositories/legacy_manifest_content_repository.dart';
 import '../repositories/sqlite_content_repository.dart';
@@ -79,6 +80,35 @@ final class LocalContentRuntime {
   void close() {
     final local = repository;
     if (local is SqliteContentRepository) local.close();
+  }
+
+  /// Reopen selected immutable private generations at Start. SQLite is a
+  /// browsing projection and cannot prove that bytes still exist or are valid.
+  Future<GameSetupContent?> verifyForPlay({
+    required String topicId,
+    required Iterable<String> packIds,
+  }) async {
+    final localStore = store;
+    if (localStore == null) return null;
+    final selected = <InstalledLocalPack>[];
+    Topic? topic;
+    for (final id in packIds) {
+      final installed = await localStore.readInstalled(id);
+      if (installed == null ||
+          installed.manifest.pack.topicId != topicId ||
+          installed.manifest.toJson()['provenance']['mode'] != 'cleared-test') {
+        return null;
+      }
+      if (topic != null && topic != installed.manifest.topic) return null;
+      topic = installed.manifest.topic;
+      selected.add(installed);
+    }
+    if (topic == null) return null;
+    return GameSetupContent.selectedPacks(
+      topic: topic,
+      packs: selected.map((p) => p.manifest.pack),
+      installedCards: selected.expand((p) => p.cards),
+    );
   }
 
   /// Reproject only committed, verified private generations after an explicit

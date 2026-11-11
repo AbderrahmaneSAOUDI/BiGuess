@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import '../../../../core/constants/app_constants.dart';
 import '../../../../domain/models/update_state.dart';
+import '../../../../providers/gameplay_network_gate.dart';
 import '../../../controllers/app_version_controller.dart';
 import '../../../controllers/update_controller.dart';
 import '../../update/update_dialog.dart';
@@ -259,6 +260,12 @@ class _AppUpdateCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    if (ref.watch(gameplayNetworkBlockedProvider)) {
+      return const Text(
+        'Return to Packs to check for app updates.',
+        key: ValueKey('session-update-hint'),
+      );
+    }
     final updateState = ref.watch(updateControllerProvider);
     final controller = ref.read(updateControllerProvider.notifier);
 

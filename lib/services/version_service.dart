@@ -21,6 +21,18 @@ class VersionService {
 
   const VersionService();
 
+  static final _pendingClients = Expando<Set<HttpClient>>();
+
+  /// Cancel only this service instance's current requests. Future Home checks
+  /// may allocate fresh clients after gameplay ends.
+  void cancelPendingRequests() {
+    final clients = _pendingClients[this];
+    if (clients == null) return;
+    for (final client in clients.toList()) {
+      client.close(force: true);
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Remote version
   // ---------------------------------------------------------------------------
@@ -31,12 +43,14 @@ class VersionService {
   /// [TimeoutException] if the request exceeds [_timeout].
   Future<RemoteVersion> fetchRemoteVersion() async {
     final client = HttpClient();
+    final clients = _pendingClients[this] ??= <HttpClient>{};
+    clients.add(client);
     try {
       client.connectionTimeout = _timeout;
       final uri = Uri.parse(
         '$_versionJsonUrl?t=${DateTime.now().millisecondsSinceEpoch}',
       );
-      final request = await client.getUrl(uri);
+      final request = await client.getUrl(uri).timeout(_timeout);
       request.headers.set(HttpHeaders.cacheControlHeader, 'no-cache, no-store');
       request.headers.set(HttpHeaders.pragmaHeader, 'no-cache');
       final response = await request.close().timeout(_timeout);
@@ -47,11 +61,16 @@ class VersionService {
         );
       }
 
-      final body = await response.transform(utf8.decoder).join();
+      final body = await response
+          .transform(utf8.decoder)
+          .join()
+          .timeout(_timeout);
       final json = jsonDecode(body) as Map<String, dynamic>;
       return RemoteVersion.fromJson(json);
     } finally {
-      client.close();
+      clients.remove(client);
+      if (clients.isEmpty) _pendingClients[this] = null;
+      client.close(force: true);
     }
   }
 

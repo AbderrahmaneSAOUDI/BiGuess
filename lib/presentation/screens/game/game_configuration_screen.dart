@@ -6,6 +6,10 @@ import '../../../domain/models/entitlement.dart';
 import '../../../domain/models/game_setup.dart';
 import '../../../providers/entitlement_provider.dart';
 import '../../../providers/game_session_controller.dart';
+import '../../../providers/gameplay_network_gate.dart';
+import '../../../providers/pack_download_controller.dart';
+import '../../../providers/catalog_controller.dart';
+import '../../controllers/update_controller.dart';
 import '../../../providers/game_settings_controller.dart';
 import '../../../providers/topic_pack_providers.dart';
 import 'game_screen.dart';
@@ -33,6 +37,8 @@ class _GameConfigurationScreenState
   );
   Difficulty _difficulty = Difficulty.easy;
   bool _starting = false;
+  bool _enteredSession = false;
+  String? _startError;
 
   ({String topic, String pack}) get _key =>
       (topic: widget.topicName, pack: widget.packName);
@@ -48,37 +54,80 @@ class _GameConfigurationScreenState
     super.dispose();
   }
 
-  void _start() {
-    // Re-read at the tap boundary, including entitlement/local availability.
+  Future<void> _start() async {
+    if (_starting || ref.read(gameplayPreparingProvider)) return;
     final setup = _setup;
-    final entitlement = ref.read(entitlementProvider);
     ref.invalidate(gameSetupContentProvider(_key));
-    final content = ref.read(gameSetupContentProvider(_key));
-    if (_starting ||
-        setup.validate(entitlement: entitlement, content: content) != null) {
+    var content = ref.read(gameSetupContentProvider(_key));
+    if (setup.validate(
+          entitlement: ref.read(entitlementProvider),
+          content: content,
+        ) !=
+        null) {
       return;
     }
-    final snapshot = setup.freeze(entitlement: entitlement, content: content);
-    final session = ref.read(gameSessionProvider.notifier);
-    session.configure(snapshot.configuration);
-    session.start(
-      topic: snapshot.topic,
-      installedPacks: snapshot.packs,
-      installedCards: snapshot.cards,
-    );
-    ref.read(showCharacterNameHintProvider.notifier).set(false);
-    FocusManager.instance.primaryFocus?.unfocus();
-    setState(() => _starting = true);
-    // Replace setup so Back exits to Packs rather than editing a running game.
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute<void>(
-        builder: (context) => GameScreen(
-          topicName: widget.topicName,
-          packName: widget.packName,
-          useSession: true,
+    setState(() {
+      _starting = true;
+      _startError = null;
+    });
+    final preparing = ref.read(gameplayPreparingProvider.notifier);
+    preparing.state = true;
+    try {
+      // End earlier explicit content requests before the offline Start boundary.
+      final stopped = ref
+          .read(packDownloadsProvider.notifier)
+          .stopForGameplay();
+      ref.invalidate(publicCatalogRepositoryProvider);
+      ref.read(publicCatalogRepositoryProvider);
+      ref.invalidate(packDownloadRepositoryProvider);
+      ref.read(packDownloadRepositoryProvider);
+      await Future.wait([
+        stopped,
+        ref.read(updateControllerProvider.notifier).pauseForGameplay(),
+      ]);
+      if (!mounted) return;
+      final runtime = ref.read(localContentRuntimeProvider);
+      if (runtime?.usesSqlite == true) {
+        content = await runtime!.verifyForPlay(
+          topicId: content!.topic.id,
+          packIds: content.packs.map((pack) => pack.id),
+        );
+      }
+      if (!mounted) return;
+      // The legacy migration/rollback path remains until T47. The installed
+      // runtime above always supplies freshly verified private generations.
+      final entitlement = ref.read(entitlementProvider);
+      final snapshot = setup.freeze(entitlement: entitlement, content: content);
+      final session = ref.read(gameSessionProvider.notifier);
+      session.configure(snapshot.configuration);
+      session.start(
+        topic: snapshot.topic,
+        installedPacks: snapshot.packs,
+        installedCards: snapshot.cards,
+      );
+      _enteredSession = true;
+      ref.read(showCharacterNameHintProvider.notifier).set(false);
+      FocusManager.instance.primaryFocus?.unfocus();
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute<void>(
+          builder: (context) => GameScreen(
+            topicName: widget.topicName,
+            packName: widget.packName,
+            useSession: true,
+          ),
         ),
-      ),
-    );
+      );
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _startError =
+              'Installed Pack files could not be verified. Return to Packs to choose another Pack.';
+        });
+      }
+    } finally {
+      if (preparing.mounted) preparing.state = false;
+      if (mounted && !_enteredSession) setState(() => _starting = false);
+    }
   }
 
   @override
@@ -174,11 +223,29 @@ class _GameConfigurationScreenState
                       ),
                     ),
                   ],
+                  if (_startError != null) ...[
+                    const SizedBox(height: 16),
+                    Semantics(
+                      liveRegion: true,
+                      child: Text(
+                        _startError!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.maybePop(context),
+                      child: const Text('Back to Packs'),
+                    ),
+                  ],
                   const SizedBox(height: 24),
                   FilledButton.icon(
                     onPressed: error == null && !_starting ? _start : null,
                     icon: const Icon(Icons.play_arrow_rounded),
-                    label: const Text('Start Game'),
+                    label: Text(
+                      _starting ? 'Checking installed Packs…' : 'Start Game',
+                    ),
                   ),
                 ],
               ),

@@ -13,6 +13,7 @@ import 'package:biguess/presentation/widgets/animations/animated_character_card.
 import 'package:biguess/providers/content_image_provider.dart';
 import 'package:biguess/providers/game_controller.dart';
 import 'package:biguess/providers/game_session_controller.dart';
+import 'package:biguess/providers/gameplay_network_gate.dart';
 import 'package:biguess/providers/game_settings_controller.dart';
 import 'package:biguess/providers/topic_pack_providers.dart';
 import 'package:path/path.dart' as p;
@@ -153,7 +154,16 @@ void main() {
         }
         expect(find.text('${hard ? 2 : 1} eligible cards'), findsOneWidget);
         await tester.enterText(find.byType(TextField), '$rounds');
-        await tester.tap(find.text('Start Game'));
+        await tester.runAsync(() async {
+          await tester.tap(find.text('Start Game'));
+          for (
+            var i = 0;
+            i < 200 && scope.read(gameplayPreparingProvider);
+            i++
+          ) {
+            await Future<void>.delayed(const Duration(milliseconds: 10));
+          }
+        });
         await tester.pump();
         await tester.pump(const Duration(seconds: 1));
         final legacyReveal = find

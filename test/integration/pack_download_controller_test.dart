@@ -271,7 +271,7 @@ void main() {
   );
 
   test(
-    'verified update refreshes browsing while running session and private generation stay frozen',
+    'session blocks network downloads; independent local activation leaves snapshot frozen',
     () async {
       final original = await runtime.store!.install(
         File('test/fixtures/local_pack/colors.biguesspack'),
@@ -314,14 +314,20 @@ void main() {
       repository.source = await File(
         '${directory.path}/update.biguesspack',
       ).writeAsBytes(ZipEncoder().encodeBytes(changed));
-      repository.hold = Completer<void>();
-      final pending = container
+      await container
           .read(packDownloadsProvider.notifier)
           .download(downloadSummary);
-      expect(container.read(gameSessionProvider), same(before));
+      expect(
+        container.read(packDownloadsProvider)['fixture-pack']!.error,
+        'gameplay-active',
+      );
+      expect(repository.calls, 0);
       expect(content.getInstalledCardsForPack('fixture-pack'), original.cards);
-      repository.hold!.complete();
-      await pending;
+      // A separate local writer can still activate verified bytes; the game is
+      // detached from both that pointer and the disposable browsing projection.
+      await runtime.store!.install(repository.source!);
+      await runtime.reloadInstalled();
+      container.invalidate(contentRepositoryProvider);
       expect(container.read(gameSessionProvider), same(before));
       expect(
         container

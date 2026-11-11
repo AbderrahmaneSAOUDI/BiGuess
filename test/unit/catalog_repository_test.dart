@@ -453,6 +453,29 @@ void main() {
     expect(store.value, isNull);
   });
   test(
+    'closing a pending real HTTP refresh aborts IO and preserves saved data',
+    () async {
+      final saved = await repository.refreshTopics();
+      final arrived = Completer<void>();
+      handler = (request) async {
+        arrived.complete();
+        try {
+          await request.response.done;
+        } catch (_) {
+          /* Forced close. */
+        }
+      };
+      final pending = repository.refreshTopics();
+      final rejected = expectLater(pending, throwsA(isA<CatalogFailure>()));
+      await arrived.future.timeout(const Duration(seconds: 2));
+      repository.close();
+      await rejected.timeout(const Duration(seconds: 2));
+      expect(store.value!.toJson(), saved.toJson());
+      await expectLater(repository.refreshTopics(), throwsA(failure('closed')));
+      expect(requests.length, 2);
+    },
+  );
+  test(
     'unconfigured/insecure/credential-bearing/private-path base URLs are rejected',
     () {
       for (final address in [

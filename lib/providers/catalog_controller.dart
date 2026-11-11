@@ -15,6 +15,7 @@ import '../domain/models/topic.dart';
 import '../domain/use_cases/select_packs_use_case.dart';
 import 'pack_selection_controller.dart';
 import 'topic_pack_providers.dart';
+import 'gameplay_network_gate.dart';
 
 /// Public endpoint only. An empty default keeps existing local builds inert.
 final publicCatalogBaseUriProvider = Provider<Uri?>((ref) {
@@ -36,6 +37,7 @@ final publicCatalogBaseUriProvider = Provider<Uri?>((ref) {
 });
 
 final publicCatalogRepositoryProvider = Provider<CatalogRepository?>((ref) {
+  if (ref.watch(gameplayNetworkBlockedProvider)) return null;
   final base = ref.watch(publicCatalogBaseUriProvider);
   if (base == null) return null;
   final namespace = sha256.convert(utf8.encode(base.origin)).toString();
@@ -123,9 +125,14 @@ class CatalogController extends Notifier<CatalogBrowseState> {
   Future<void> _run(
     Future<CatalogSnapshot> Function(CatalogRepository) action,
   ) async {
+    if (ref.read(gameplayNetworkBlockedProvider)) return;
     final generation = _generation;
     await _reading;
-    if (!_current(generation) || state.loading) return;
+    if (!_current(generation) ||
+        state.loading ||
+        ref.read(gameplayNetworkBlockedProvider)) {
+      return;
+    }
     final repository = ref.read(publicCatalogRepositoryProvider);
     if (repository == null) return;
     final prior = state.snapshot;

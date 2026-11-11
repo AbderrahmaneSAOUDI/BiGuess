@@ -10,5 +10,6 @@ app_id: a0871911-c109-46f9-ac9c-2104ab938018
 # auto_update controls if Shorebird should automatically update in the background on launch.
 # If auto_update: false, you will need to use package:shorebird_code_push to trigger updates.
 # https://pub.dev/packages/shorebird_code_push
-# Uncomment the following line to disable automatic updates.
-# auto_update: false
+# Gameplay owns the network-free Start boundary; app updates run through the
+# guarded Dart controller outside a session.
+auto_update: false
