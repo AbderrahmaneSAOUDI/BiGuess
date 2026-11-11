@@ -13,6 +13,7 @@ import 'studio_dataset.dart';
 import 'offline_access_policy.dart';
 import 'topic_taxonomy.dart';
 import 'pack_summary.dart';
+import 'image_ingestion.dart';
 
 enum DatasetPhase { idle, loading, ready, offline, error, denied }
 
@@ -24,10 +25,18 @@ class DatasetController extends ChangeNotifier {
     required this.session,
     required this.api,
     this.storeFactory = createDatasetStore,
+    this.imageIngestion,
   });
   final String projectId;
   final StudioSession session;
   final DatasetApi api;
+  final ImageIngestionApi? imageIngestion;
+  String? uploadingImageDraftId;
+  Completer<void>? _imageUploadCancellation;
+  bool get canUploadImages =>
+      imageIngestion != null &&
+      phase == DatasetPhase.ready &&
+      session.phase == SessionPhase.authorized;
   final DatasetStore Function() storeFactory;
   DatasetScope? scope;
   DatasetSnapshot? snapshot;
@@ -58,6 +67,7 @@ class DatasetController extends ChangeNotifier {
   }
 
   void _sessionChanged() {
+    cancelImageUpload();
     final epoch = ++_epoch;
     final oldStore = _store;
     _store = null;
@@ -1056,7 +1066,14 @@ class DatasetController extends ChangeNotifier {
     _name(value['name']! as String);
     if (draft.localImage != null) {
       if (!{'create', 'update'}.contains(draft.action) ||
-          value['imageReference'] != null) {
+          (draft.uploadedImage == null
+              ? value['imageReference'] != null
+              : !draft.uploadedImage!.matches(
+                      value['packId']! as String,
+                      draft.localImage!,
+                    ) ||
+                    value['imageReference'] !=
+                        draft.uploadedImage!.imageReference)) {
         throw const DatasetStorageFailure('invalid-card-image');
       }
     } else if (value['imageReference'] is! String ||
@@ -1163,6 +1180,7 @@ class DatasetController extends ChangeNotifier {
         replaceImage: image != null,
       ),
       localImage: image ?? existing?.localImage,
+      uploadedImage: image == null ? existing?.uploadedImage : null,
     );
     _validateCardOperation(draft);
     await _saveDrafts([
@@ -1199,6 +1217,7 @@ class DatasetController extends ChangeNotifier {
         replaceImage: image != null,
       ),
       localImage: image,
+      clearUploadedImage: image != null,
       status: DraftStatus.draft,
     );
     _validateCardOperation(draft);
@@ -1216,6 +1235,93 @@ class DatasetController extends ChangeNotifier {
       _cardAction(id, 'restore', expectedRevision: expectedRevision);
   Future<void> purgeCard(String id, {int? expectedRevision}) =>
       _cardAction(id, 'permanentDelete', expectedRevision: expectedRevision);
+
+  void cancelImageUpload() {
+    final cancellation = _imageUploadCancellation;
+    if (cancellation != null && !cancellation.isCompleted) {
+      cancellation.complete();
+    }
+    _imageUploadCancellation = null;
+    uploadingImageDraftId = null;
+    _notify();
+  }
+
+  /// Explicit image-only upload. Card mutation remains a separate queued intent.
+  Future<void> uploadCardImage(String draftId) async {
+    if (!canUploadImages || uploadingImageDraftId != null) {
+      throw const DatasetStorageFailure('image-upload-unavailable');
+    }
+    final current = _workingSnapshot();
+    final draft = current.drafts.where((d) => d.id == draftId).firstOrNull;
+    if (draft == null) throw const DatasetStorageFailure('invalid-draft');
+    _validateCardOperation(draft);
+    final image = draft.localImage;
+    if (image?.preparation == null) {
+      throw const DatasetStorageFailure('image-not-prepared');
+    }
+    final packId = draft.value['packId']! as String;
+    final pack = current.records
+        .where((r) => r['resourceType'] == 'pack' && r['id'] == packId)
+        .firstOrNull;
+    if (pack == null) throw const DatasetStorageFailure('pack-not-eligible');
+    final target = scope!;
+    final epoch = _epoch;
+    final token = session.tokenFor(target.uid, target.role);
+    if (token == null) {
+      throw const DatasetStorageFailure('image-upload-unavailable');
+    }
+    final cancellation = Completer<void>();
+    _imageUploadCancellation = cancellation;
+    uploadingImageDraftId = draftId;
+    _notify();
+    bool active() =>
+        _current(epoch) &&
+        identical(_imageUploadCancellation, cancellation) &&
+        !cancellation.isCompleted &&
+        canUploadImages;
+    try {
+      final principal = await session.authorization.lookup(token);
+      if (!active()) throw const DatasetApiFailure('cancelled');
+      if (principal.uid != target.uid || principal.role != target.role) {
+        session.rejectAuthorization('scope-changed');
+        throw const DatasetApiFailure('cancelled');
+      }
+      final receipt = await imageIngestion!.upload(
+        token,
+        packId,
+        pack['revision']! as int,
+        image!,
+        active,
+        cancelled: cancellation.future,
+      );
+      if (!active()) throw const DatasetApiFailure('cancelled');
+      final latest = _workingSnapshot();
+      final same = latest.drafts.where((d) => d.id == draftId).firstOrNull;
+      if (same == null ||
+          same.localImage == null ||
+          !receipt.matches(packId, same.localImage!)) {
+        throw const DatasetStorageFailure('draft-conflict');
+      }
+      final updated = same.copyWith(
+        uploadedImage: receipt,
+        value: {...same.value, 'imageReference': receipt.imageReference},
+      );
+      _validateCardOperation(updated);
+      await _saveDrafts(
+        latest.drafts.map((d) => d.id == draftId ? updated : d).toList(),
+      );
+    } catch (error) {
+      final code = _code(error);
+      if (active() && {'session-expired', 'forbidden'}.contains(code)) {
+        session.rejectAuthorization(code);
+      }
+      throw DatasetStorageFailure(code);
+    } finally {
+      if (identical(_imageUploadCancellation, cancellation)) {
+        cancelImageUpload();
+      }
+    }
+  }
 
   Future<void> _cardAction(
     String id,
@@ -1352,12 +1458,14 @@ class DatasetController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    cancelImageUpload();
     _epoch++;
     session.removeListener(_sessionChanged);
     scope = null;
     snapshot = null;
     _store?.close();
     api.close();
+    imageIngestion?.close();
     super.dispose();
   }
 }

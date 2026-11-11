@@ -1,0 +1,33 @@
+name: Content API local verification
+on:
+  push:
+    branches: [main]
+    paths: ['backend/content-api/**', 'contracts/content/**', 'contracts/studio/**', '.github/workflows/content-api-checks.yml']
+  pull_request:
+    paths: ['backend/content-api/**', 'contracts/content/**', 'contracts/studio/**', '.github/workflows/content-api-checks.yml']
+permissions:
+  contents: read
+concurrency:
+  group: content-api-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend/content-api
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: backend/content-api/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      # npm test builds only with Wrangler --dry-run, then uses isolated local
+      # Workerd/D1/R2. This job has no deployment credentials or remote writes.
+      - run: npm test

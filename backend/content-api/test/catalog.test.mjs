@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
-import { root } from '../scripts/local.mjs';
+import { root, workerModules } from '../scripts/local.mjs';
 
 const migration = readFileSync(new URL('../migrations/0002_catalog.sql', import.meta.url), 'utf8')
   .split('\n').filter(line => !line.trim().startsWith('--')).join(' ');
@@ -13,7 +13,7 @@ function validate(kind, payload) {
     { cwd: root, input: JSON.stringify(payload), stdio: ['pipe', 'pipe', 'pipe'] });
 }
 async function setup(t, migrate = true) {
-  const mf = new Miniflare(convertV4MiniflareOptions({ modules: true,
+  const mf = new Miniflare(convertV4MiniflareOptions({ modules: workerModules(`${root}dist/index.js`),
     scriptPath: `${root}dist/index.js`, compatibilityDate: '2026-11-01',
     bindings: { APP_ENV: 'staging' }, d1Databases: { DB: 'catalog-test' }, r2Buckets: { CONTENT: 'unused' } }));
   t.after(() => mf.dispose());

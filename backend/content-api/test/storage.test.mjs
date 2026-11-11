@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
-import { root, wrangler } from '../scripts/local.mjs';
+import { root, wrangler, workerModules } from '../scripts/local.mjs';
 
 const fixture = JSON.parse(readFileSync(new URL('../fixtures/metadata.json', import.meta.url)));
 const image = readFileSync(new URL('../fixtures/image.webp', import.meta.url));
@@ -14,7 +14,7 @@ const sql = (path) => readFileSync(new URL(path, import.meta.url), 'utf8')
 
 function runtime(environment = 'local') {
   return new Miniflare(convertV4MiniflareOptions({
-    modules: true,
+    modules: workerModules(`${root}dist/index.js`),
     scriptPath: `${root}dist/index.js`,
     compatibilityDate: '2026-11-01',
     bindings: { APP_ENV: environment },
@@ -78,7 +78,7 @@ test('Wrangler migrations and seed repeat against isolated persistent local stor
   }
   // Use the same on-disk D1/R2 state layout as Wrangler dev.
   mf = new Miniflare(convertV4MiniflareOptions({
-    modules: true, scriptPath: `${root}dist/index.js`, compatibilityDate: '2026-11-01',
+    modules: workerModules(`${root}dist/index.js`), scriptPath: `${root}dist/index.js`, compatibilityDate: '2026-11-01',
     bindings: { APP_ENV: 'local' },
     d1Databases: { DB: '00000000-0000-0000-0000-000000000001' },
     r2Buckets: { CONTENT: 'biguess-content-local' },

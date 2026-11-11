@@ -4,7 +4,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { generateKeyPair, exportJWK, SignJWT } from 'jose';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
-import { root } from '../scripts/local.mjs';
+import { root, workerModules } from '../scripts/local.mjs';
 
 // Real Workerd routing, RS256 verification, D1 and R2. Only Google JWKS is mocked.
 const project = 'biguess-scope-test';
@@ -45,7 +45,7 @@ async function setup(t, { legacy = true } = {}) {
   const tokens = Object.fromEntries(await Promise.all(users.map(async user => [user.uid, await signed(user.uid)])));
   const bindings = { APP_ENV: 'staging', FIREBASE_PROJECT_ID: project, STUDIO_USERS: JSON.stringify(users),
     STUDIO_ALLOWED_ORIGINS: JSON.stringify([origin]) };
-  const options = { modules: true, scriptPath: `${root}dist/index.js`, compatibilityDate: '2026-11-01', bindings,
+  const options = { modules: workerModules(`${root}dist/index.js`), scriptPath: `${root}dist/index.js`, compatibilityDate: '2026-11-01', bindings,
     d1Databases: { DB: 'scope-database' }, r2Buckets: { CONTENT: 'scope-images' },
     outboundService: request => {
       assert.equal(request.url, 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com');

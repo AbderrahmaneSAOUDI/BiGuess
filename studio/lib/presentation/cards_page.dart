@@ -208,13 +208,40 @@ class _CardsPageState extends State<CardsPage> {
                       }),
                       Text('Pending Card change: ${card.pending!.action}'),
                       if (card.localImage != null)
-                        const Text(
-                          'Selected image has not been uploaded. This commit remains local.',
+                        Text(
+                          card.pending!.uploadedImage == null
+                              ? 'Selected image has not been uploaded. This commit remains local.'
+                              : 'Image uploaded privately — Card commit is still pending.',
                         ),
                       Wrap(
                         spacing: 12,
                         runSpacing: 4,
                         children: [
+                          if (eligible &&
+                              card.localImage?.isPrepared == true &&
+                              card.pending!.status != DraftStatus.conflict) ...[
+                            TextButton(
+                              onPressed:
+                                  controller.canUploadImages &&
+                                      controller.uploadingImageDraftId == null
+                                  ? () => _run(
+                                      context,
+                                      () => controller.uploadCardImage(
+                                        card.pending!.id,
+                                      ),
+                                    )
+                                  : null,
+                              child: const Text('Upload image privately'),
+                            ),
+                            if (controller.uploadingImageDraftId ==
+                                card.pending!.id) ...[
+                              const Text('Uploading private image…'),
+                              TextButton(
+                                onPressed: controller.cancelImageUpload,
+                                child: const Text('Cancel image upload'),
+                              ),
+                            ],
+                          ],
                           if (card.pending!.status == DraftStatus.draft)
                             TextButton(
                               onPressed: () => _run(

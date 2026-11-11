@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash, generateKeyPairSync, randomUUID } from 'node:crypto';
 import { generateKeyPair, exportJWK, SignJWT } from 'jose';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
-import { root } from '../scripts/local.mjs';
+import { root, workerModules } from '../scripts/local.mjs';
 import { prepare } from '../scripts/prepare.mjs';
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -68,7 +68,7 @@ async function setup(t) {
       aud: project, iss: `https://securetoken.google.com/${project}`, iat: now - 10, auth_time: now - 20, exp: now + 3600 })
       .setProtectedHeader({ alg: 'RS256', kid: jwk.kid }).sign(identityKeys.privateKey);
   }
-  const mf = new Miniflare(convertV4MiniflareOptions({ modules: true,
+  const mf = new Miniflare(convertV4MiniflareOptions({ modules: workerModules(join(temporary, 'worker/publication-worker.js')),
     modulesRoot: join(temporary, 'worker'), scriptPath: join(temporary, 'worker/publication-worker.js'), compatibilityDate: '2026-11-01',
     bindings: { APP_ENV: 'staging', PUBLICATION_KEYS: JSON.stringify(fixtures.get(1).trustedKeys),
       FIREBASE_PROJECT_ID: project, STUDIO_USERS: JSON.stringify(users) },

@@ -1,4 +1,4 @@
-# Content API (T20–T25, T27B)
+# Content API (T20–T25, T27B, T32A)
 
 Isolated TypeScript Cloudflare Worker, D1 migrations and private R2 objects.
 `../biguess-api/` remains the separate legacy game-record API. No Flutter client,
@@ -249,6 +249,13 @@ administrative lifecycle operations now share the versioned atomic
 Item mutation routes accept a single matching operation in the same StudioBatch
 envelope. Canonical administrative reads, pagination and scoped change feeds are
 implemented in [T27B](STUDIO.md); user management and publishing still return 501.
+
+T32A adds [authenticated private image ingestion](IMAGE-INGESTION.md) for the
+browser T32 pipeline, with independent Wasm decode, Pack ownership/revision
+checks, transactional quotas, retry/dedup and trusted orphan cleanup. Uploading
+does not change a Card; only explicit T24 Commit promotes and attaches bytes.
+No Content Backend deployment, production bucket operation or cleanup schedule
+is enabled by this local implementation.
 Hide permission never implies deletion.
 
 `npm test` exercises the real bundled Worker with locally signed RSA tokens and

@@ -8,6 +8,7 @@ import 'package:biguess_studio/auth/studio_session.dart';
 import 'package:biguess_studio/auth/worker_authorization.dart';
 import 'package:biguess_studio/data/dataset_api.dart';
 import 'package:biguess_studio/data/dataset_controller.dart';
+import 'package:biguess_studio/data/image_ingestion.dart';
 import 'package:biguess_studio/data/network_state.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
@@ -60,16 +61,31 @@ Future<void> main() async {
   usePathUrlStrategy();
   final network = BrowserNetwork();
   final origin = Uri.parse(web.window.location.origin);
+  // Only this standalone synthetic-identity fixture can select a second local
+  // origin, so real browser CORS can be verified without production API access.
+  const apiKey = 'biguess-browser-fixture-api';
+  final requestedApi = Uri.base.queryParameters['api'];
+  if (requestedApi != null) {
+    final requested = Uri.parse(requestedApi);
+    if (requested.scheme != 'http' ||
+        !{'127.0.0.1', 'localhost'}.contains(requested.host) ||
+        requested.origin != requestedApi) {
+      throw const FormatException('Fixture API must be a loopback origin.');
+    }
+    web.window.sessionStorage.setItem(apiKey, requestedApi);
+  }
+  final api = Uri.parse(web.window.sessionStorage.getItem(apiKey) ?? '$origin');
   final session = StudioSession(
     FixtureIdentity(),
-    WorkerAuthorization(origin, http.Client()),
+    WorkerAuthorization(api, http.Client()),
     online: () => network.online,
     connectionChanges: network.changes,
   );
   final dataset = DatasetController(
     projectId: 'browser-fixture',
     session: session,
-    api: WorkerDatasetApi(origin, http.Client()),
+    api: WorkerDatasetApi(api, http.Client()),
+    imageIngestion: WorkerImageIngestionApi(api, http.Client()),
   )..start();
   runApp(StudioApp(session: session, dataset: dataset));
   await session.start();

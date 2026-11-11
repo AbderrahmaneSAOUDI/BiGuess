@@ -48,6 +48,7 @@ app.*.map.json
 # Agent cache
 .agents/cache/
 TO_BE_DELETED/
+.wrangler/
 
 # Keystores and release signing credentials
 key.properties

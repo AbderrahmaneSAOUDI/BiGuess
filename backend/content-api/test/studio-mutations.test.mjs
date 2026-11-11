@@ -4,7 +4,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { generateKeyPair, exportJWK, SignJWT } from 'jose';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
-import { root } from '../scripts/local.mjs';
+import { root, workerModules } from '../scripts/local.mjs';
 
 // Exercise deployed routing, Firebase verification, D1 transactions and R2 reads.
 // Only Google's public-key response is substituted; no application auth bypass.
@@ -32,7 +32,7 @@ async function setup(t) {
       auth_time: now - 20, exp: now + 3600 })
       .setProtectedHeader({ alg: 'RS256', kid: jwk.kid }).sign(keys.privateKey);
   }
-  const mf = new Miniflare(convertV4MiniflareOptions({ modules: true,
+  const mf = new Miniflare(convertV4MiniflareOptions({ modules: workerModules(`${root}dist/index.js`),
     scriptPath: `${root}dist/index.js`, compatibilityDate: '2026-11-01',
     bindings: { APP_ENV: 'staging', FIREBASE_PROJECT_ID: project, STUDIO_USERS: JSON.stringify(users) },
     d1Databases: { DB: 'studio-mutations-test' }, r2Buckets: { CONTENT: 'studio-images-test' },

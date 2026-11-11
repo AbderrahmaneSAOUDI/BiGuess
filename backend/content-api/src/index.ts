@@ -6,6 +6,7 @@ import { mutate } from './studio-mutations';
 import { sync } from './sync';
 import { studioCors } from './studio-cors';
 import { studioRead } from './studio-reads';
+import { ingestImage } from './studio-images';
 
 interface Fixture {
   object_key: string;
@@ -42,6 +43,12 @@ export default {
       return studioCors(request, env, async () => {
         try {
           const principal = await authenticate(request, env);
+          const upload = /^\/studio\/v1\/packs\/([^/]+)\/images$/.exec(path);
+          if (request.method === 'POST' && upload) {
+            let id: string;
+            try { id = decodeURIComponent(upload[1]); } catch { return studioError(404, 'not_found'); }
+            return await ingestImage(request, env, principal, id);
+          }
           if (request.method === 'GET' && !path.startsWith('/content/v1/studio')) {
             const read = await studioRead(request, env, principal);
             if (read) return read;

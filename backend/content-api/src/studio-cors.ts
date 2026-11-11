@@ -1,7 +1,7 @@
 import type { Env } from './env';
 
 const methods = ['GET', 'POST', 'PATCH', 'DELETE'];
-const headers = ['authorization', 'content-type', 'if-match', 'if-none-match', 'idempotency-key'];
+const headers = ['authorization', 'content-type', 'if-match', 'if-none-match', 'idempotency-key', 'x-content-sha256'];
 
 // Private Studio traffic has a separate origin policy from anonymous catalog
 // traffic. No default, wildcard, suffix matching or browser credentials.

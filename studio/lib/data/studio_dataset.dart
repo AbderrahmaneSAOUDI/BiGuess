@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'card_image.dart';
+import 'image_ingestion.dart';
 
 /// Namespace is a routing key, never a persisted authorization credential.
 class DatasetScope {
@@ -49,6 +50,7 @@ class LocalDraft {
     this.status = DraftStatus.draft,
     this.publishedRevision,
     this.localImage,
+    this.uploadedImage,
   }) : value = Map.unmodifiable(value);
   final String id;
   final String resourceType;
@@ -59,6 +61,7 @@ class LocalDraft {
   final DraftStatus status;
   final int? publishedRevision;
   final CardImage? localImage;
+  final UploadedCardImage? uploadedImage;
 
   LocalDraft copyWith({
     Map<String, Object?>? value,
@@ -66,6 +69,8 @@ class LocalDraft {
     int? publishedRevision,
     CardImage? localImage,
     bool clearLocalImage = false,
+    UploadedCardImage? uploadedImage,
+    bool clearUploadedImage = false,
   }) => LocalDraft(
     id: id,
     resourceType: resourceType,
@@ -76,6 +81,9 @@ class LocalDraft {
     status: status ?? this.status,
     publishedRevision: publishedRevision ?? this.publishedRevision,
     localImage: clearLocalImage ? null : localImage ?? this.localImage,
+    uploadedImage: clearUploadedImage
+        ? null
+        : uploadedImage ?? this.uploadedImage,
   );
 
   Map<String, Object?> toJson() => {
@@ -88,6 +96,7 @@ class LocalDraft {
     'status': status.name,
     'publishedRevision': publishedRevision,
     if (localImage != null) 'localImage': localImage!.toJson(),
+    if (uploadedImage != null) 'uploadedImage': uploadedImage!.toJson(),
   };
   factory LocalDraft.fromJson(Map<String, Object?> json) {
     if (!_keys(json, {
@@ -100,6 +109,7 @@ class LocalDraft {
           'status',
           'publishedRevision',
           'localImage',
+          'uploadedImage',
         }) ||
         json['id'] is! String ||
         (json['id'] as String).isEmpty ||
@@ -121,6 +131,10 @@ class LocalDraft {
             (json['resourceType'] != 'card' ||
                 !{'create', 'update'}.contains(json['action'] ?? 'update') ||
                 json['localImage'] is! Map)) ||
+        (json['uploadedImage'] != null &&
+            (json['resourceType'] != 'card' ||
+                json['localImage'] == null ||
+                json['uploadedImage'] is! Map)) ||
         !_revision(json['baseRevision']) ||
         !_revision(json['publishedRevision'])) {
       throw const FormatException('Invalid local draft');
@@ -137,6 +151,9 @@ class LocalDraft {
       localImage: json['localImage'] == null
           ? null
           : CardImage.fromJson(_map(json['localImage'])),
+      uploadedImage: json['uploadedImage'] == null
+          ? null
+          : UploadedCardImage.fromJson(_map(json['uploadedImage'])),
     );
   }
 }

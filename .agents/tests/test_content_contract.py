@@ -24,6 +24,11 @@ def fixture(name):
 
 
 class ContentContractTests(unittest.TestCase):
+    def test_private_image_ingestion_extension_is_valid(self):
+        path = REPO / 'contracts/studio/v1/image-ingestion.openapi.json'
+        spec = json.loads(path.read_text())
+        OpenAPIV31SpecValidator(spec, base_uri=path.as_uri()).validate()
+
     def test_schema_and_openapi_are_valid_and_references_resolve(self):
         Draft202012Validator.check_schema(contract.SCHEMA)
         spec = json.loads((contract.CONTRACT / 'openapi.json').read_text())

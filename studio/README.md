@@ -320,7 +320,7 @@ name, difficulty, original ID and image preview if site storage survives.
 Queue Card commit explicitly persists an unsent local intent. A selected image
 has no fabricated remote reference and cannot become an upload-ready metadata
 operation until T32A authenticated ingestion supplies a valid Pack-bound image
-reference. No server mutation occurs.
+reference. Local queueing does not execute the Card mutation.
 Uncommitted/replaced images and hidden/deleted/conflicting Cards do not make a
 Pack playable. Quota failures retain form inputs and the prior saved snapshot.
 Legacy T28 name drafts remain compatible; matching readonly metadata is stripped
@@ -362,3 +362,40 @@ Chromium is exercised by the automated acceptance suite; other browser engines
 still need live validation. T32A must independently revalidate images and scope
 before ingestion. No image upload or backend activation is added here. See
 [T32 verification](T32-VERIFICATION.md) for results and reproduction commands.
+
+## Private image ingestion (T32A)
+
+Save a prepared Card image locally, then choose **Upload image privately** while
+online and authorized. This explicit action sends only that image to the
+configured Worker, with its normalized SHA-256 and the stored Pack revision.
+There are no background image uploads. Cancellation, failed transfer or failed
+receipt persistence retains the local image; retrying the same content is safe.
+An account/role change aborts in-flight work and rejects late results.
+
+The Worker checks Firebase UID/role, stored Pack ownership and its Topic before
+reading bytes. It independently validates normalized PNG/WebP, bounded size and
+dimensions, metadata, SHA-256 and decoded pixels. JPEG sources first pass through
+T32. Exact-origin preflights permit the upload headers, while every actual upload
+still requires authentication and scope. Private staging has no public read
+route; no R2 credentials or signing keys are present in the app.
+
+A validated upload receipt is stored with the account's draft outside canonical
+game fields. The Card keeps its original ID and Pack and uses the returned scoped
+image reference. **Queue Card commit** continues to persist a local unsent intent;
+it does not send the Card mutation. T24 accepts the returned reference only in a
+separate, explicit versioned batch with current aggregate revision/idempotency.
+The backend verifies/promotes staged bytes and binds the image in that guarded
+transaction. General browser queue transport remains T36; bulk import remains
+T33. Uploading never publishes a Card or a Pack.
+
+Ready images can expire after 24 hours without attachment. A local receipt is
+not a permanent remote capability: repeat the private upload if its orphan
+binding has expired. Server quotas are separate from T32 quality targets;
+contact the Owner on a quota failure. Trusted operator cleanup reclaims expired
+private staging, never published canonical objects. Contributors have no image
+deletion endpoint, and discarding a local draft does not delete remote content.
+
+The API remains independently configured; no production Content Backend
+deployment, remote migration, API activation or bucket operation is performed by
+this ticket. See the [versioned contract](../contracts/studio/v1/image-ingestion.md)
+and [T32A verification](T32A-VERIFICATION.md).

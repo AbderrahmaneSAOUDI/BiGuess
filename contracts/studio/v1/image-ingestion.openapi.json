@@ -1,0 +1,280 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "BiGuess Studio private image ingestion extension",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/studio/v1/packs/{packId}/images": {
+      "post": {
+        "operationId": "ingestStudioPackImageV1",
+        "summary": "Privately ingest a prepared image without a Card mutation",
+        "security": [
+          {
+            "firebaseBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Content-SHA256",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\"rev-[1-9][0-9]*\"$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "image/png": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/webp": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Private scoped image binding; same verified bytes retry to the same reference",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageReceipt"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Frozen content-v1 error envelope; no private object bytes or credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageIngestionError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "options": {
+        "summary": "Approved-origin upload preflight; not an authorization grant",
+        "responses": {
+          "204": {
+            "description": "Exact configured origin/method/headers allowed"
+          },
+          "403": {
+            "description": "Unapproved or invalid preflight"
+          }
+        }
+      },
+      "parameters": [
+        {
+          "name": "packId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      ]
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "firebaseBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "Firebase Google ID token"
+      }
+    },
+    "schemas": {
+      "ImageReceipt": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "protocolVersion",
+          "imageIngestionVersion",
+          "packId",
+          "imageReference",
+          "sha256",
+          "byteLength",
+          "contentType",
+          "width",
+          "height"
+        ],
+        "properties": {
+          "protocolVersion": {
+            "const": 1
+          },
+          "imageIngestionVersion": {
+            "const": 1
+          },
+          "packId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "imageReference": {
+            "type": "string",
+            "pattern": "^objects/[a-f0-9]{64}\\.(webp|png)$"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "byteLength": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5242880
+          },
+          "contentType": {
+            "enum": [
+              "image/png",
+              "image/webp"
+            ]
+          },
+          "width": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1024
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1024
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "contentType": {
+                  "const": "image/png"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "imageReference": {
+                  "pattern": "^objects/[a-f0-9]{64}\\.png$"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "contentType": {
+                  "const": "image/webp"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "imageReference": {
+                  "pattern": "^objects/[a-f0-9]{64}\\.webp$"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "ImageIngestionError": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "protocolVersion",
+          "error"
+        ],
+        "properties": {
+          "protocolVersion": {
+            "const": 1,
+            "type": "integer"
+          },
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "message",
+              "requestId",
+              "retryable",
+              "currentRevision"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "invalid_request",
+                  "unsupported_protocol",
+                  "unauthenticated",
+                  "forbidden",
+                  "not_found",
+                  "unavailable",
+                  "deleted",
+                  "revision_conflict",
+                  "precondition_required",
+                  "cursor_expired",
+                  "delta_unavailable",
+                  "validation_failed",
+                  "idempotency_conflict",
+                  "rate_limited",
+                  "internal_error",
+                  "image_too_large",
+                  "upload_interrupted",
+                  "upload_in_progress",
+                  "quota_exceeded",
+                  "storage_unavailable"
+                ]
+              },
+              "message": {
+                "$ref": "../../content/v1/schemas.json#/$defs/Name"
+              },
+              "requestId": {
+                "$ref": "../../content/v1/schemas.json#/$defs/Id"
+              },
+              "retryable": {
+                "type": "boolean"
+              },
+              "currentRevision": {
+                "oneOf": [
+                  {
+                    "$ref": "../../content/v1/schemas.json#/$defs/Revision"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

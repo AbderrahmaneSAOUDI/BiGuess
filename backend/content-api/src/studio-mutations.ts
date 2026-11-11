@@ -2,6 +2,7 @@ import type { Env } from './env';
 import { authorize, StudioError, type Principal, type Action } from './studio-auth';
 import { hash } from './publication';
 import { checkBatchScope, assertBatchScope, scopeReads, captureChange, resolvePackImage } from './studio-scope';
+import { promoteImage } from './studio-images';
 
 type Kind = 'topic' | 'pack' | 'card';
 type MutationAction = 'create' | 'update' | 'hide' | 'activate' | 'softDelete' | 'restore' | 'permanentDelete' | 'publish';
@@ -201,6 +202,7 @@ export async function mutate(request: Request, env: Env, principal: Principal, r
         && e.resource_type === (op.resourceType === 'topic' ? 'pack' : op.resourceType === 'pack' ? 'card' : '') && e.state !== 'purged')) fail('Purge children before their parent.');
       if (op.value?.imageReference && !verifiedImages.has(op.value.imageReference)) {
         op.value.imageReference = await resolvePackImage(env, aggregate.id, op.value.imageReference);
+        await promoteImage(env, aggregate.id, op.value.imageReference);
         await image(env, op.value.imageReference);
         verifiedImages.add(op.value.imageReference);
       }
@@ -234,6 +236,8 @@ export async function mutate(request: Request, env: Env, principal: Principal, r
     const result = { protocolVersion: 1, aggregate, revision, committedAt, actorId: principal.uid };
     const statements = [env.DB.prepare('INSERT INTO studio_commits VALUES (?, ?, ?, ?, ?, ?, ?)')
       .bind(principal.uid, idempotency, fingerprint, canonicalRequest, JSON.stringify(result), batchId, generation)];
+    for (const reference of verifiedImages) statements.push(env.DB.prepare('INSERT INTO studio_image_commits VALUES (?, ?, ?)')
+      .bind(batchId, aggregate.id, reference));
     for (const { entity: e, action } of changed.values()) {
       const isCreate = action === 'create';
       statements.push(env.DB.prepare(isCreate ? 'INSERT INTO studio_entities VALUES (?, ?, ?, ?, ?, ?)' :
@@ -280,6 +284,7 @@ export async function mutate(request: Request, env: Env, principal: Principal, r
         throw new MutationError(412, 'revision_conflict', 'Content changed during validation. Refresh and retry.', latest?.revision ?? null);
       }
       if (String(error).includes('UNIQUE constraint failed: studio_entities')) fail('Identity already exists and cannot be reused.');
+      if (String(error).includes('image_binding_expired')) fail('The private image expired. Upload it again before committing.');
       throw error;
     }
     return response(result);

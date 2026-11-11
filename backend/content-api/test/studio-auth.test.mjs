@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { generateKeyPair, exportJWK, SignJWT } from 'jose';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
-import { root } from '../scripts/local.mjs';
+import { root, workerModules } from '../scripts/local.mjs';
 
 // Only outbound Google key discovery is mocked. The deployed Worker performs
 // real RS256 verification and request authorization, with no auth bypass binding.
@@ -24,7 +24,7 @@ async function token(uid = 'collector', overrides = {}, key = keys.privateKey, h
   return new SignJWT(claims).setProtectedHeader({ alg: 'RS256', kid: jwk.kid, ...header }).sign(key);
 }
 async function setup(t, bindings = {}, keyResponse = () => Response.json({ keys: [jwk] })) {
-  const mf = new Miniflare(convertV4MiniflareOptions({ modules: true,
+  const mf = new Miniflare(convertV4MiniflareOptions({ modules: workerModules(`${root}dist/index.js`),
     scriptPath: `${root}dist/index.js`, compatibilityDate: '2026-11-01',
     bindings: { APP_ENV: 'staging', FIREBASE_PROJECT_ID: project,
       STUDIO_USERS: JSON.stringify(users), ...bindings },

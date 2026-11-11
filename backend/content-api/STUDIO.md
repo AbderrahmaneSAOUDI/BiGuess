@@ -1,4 +1,4 @@
-# Administrative mutations and scoped reads (T24, T27B)
+# Administrative mutations, scoped reads and image ingestion (T24, T27B, T32A)
 
 T27B implements the approved [administrative scope contract](../../contracts/studio/v1/README.md).
 Apply additive `0006_studio_scope.sql` with `npm run db:migrate` locally after
@@ -48,10 +48,14 @@ All private responses are `no-store` with exact-origin CORS; they never use 304.
 
 Card reads expose Pack-specific opaque image identifiers, not raw R2 keys or
 download capabilities. Card attachment requires a trusted `studio_pack_images`
-binding before any R2 read. Only operator ingestion establishes those bindings;
-request JSON cannot. Private image/upload routes remain disabled (404); future
-handlers must resolve stored Pack scope and its binding before object access.
-T28 browser storage/session isolation and the upload/publishing UI remain separate.
+binding before any R2 read. Operator ingestion or the authenticated T32A pipeline
+below establishes those bindings; request JSON cannot. Private image GET routes
+remain disabled (404). Browser storage/session isolation remains in T28, and
+publishing remains a separate privileged workflow.
+
+See [T32A image ingestion](IMAGE-INGESTION.md) for the binary upload contract,
+full server decode, quota reservations, explicit attachment and trusted orphan
+cleanup policy. Original T24 did not include uploads; T32A is additive.
 
 The Worker implements the frozen [v1 Studio contract](../../contracts/content/v1/README.md#studio-mutations-concurrency-and-authorization).
 Apply `0004_studio.sql` through the existing **local** migration workflow; this
@@ -86,9 +90,10 @@ Card `{name, packId, imageReference, difficulty}`. Names are trimmed/nonempty,
 difficulty is integer 1–3, and extra fields (including actor, role, deletion,
 revision or publication state) are rejected. Pack Topic reassignment and
 cross-Pack Card moves are rejected; a multi-aggregate move protocol is deferred.
-Images reference operator-managed R2 `objects/<sha256>.<webp|png|jpg>` objects;
+Images reference trusted R2 `objects/<sha256>.<webp|png|jpg>` objects;
 the Worker checks existence, byte hash, media type and image format header.
-No arbitrary URLs, uploads or client-supplied image authority are accepted.
+No arbitrary URLs or client-supplied image authority are accepted. T32A stages
+prepared images separately and promotes them only for an explicit Commit.
 
 Collectors can create/update/hide Packs and Cards and `activate` hidden Cards.
 Topic management and all `softDelete`, `restore`, and `permanentDelete` operations
