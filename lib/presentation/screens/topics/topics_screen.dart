@@ -6,6 +6,8 @@ import '../../../core/constants/app_constants.dart';
 import '../../../domain/models/update_decision.dart';
 import '../../../domain/models/update_state.dart';
 import '../../../providers/topic_pack_providers.dart';
+import '../../../providers/catalog_controller.dart';
+import '../../widgets/common/catalog_status.dart';
 import '../../../providers/theme_controller.dart';
 import '../../controllers/update_controller.dart';
 import '../../widgets/animations/animated_glass_app_bar_background.dart';
@@ -77,7 +79,8 @@ class _TopicsScreenState extends ConsumerState<TopicsScreen> {
     });
 
     final repository = ref.watch(contentRepositoryProvider);
-    final topics = repository.getTopics();
+    final topics = ref.watch(browseTopicsProvider);
+    final catalog = ref.watch(catalogBrowseProvider).snapshot;
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final themeMode = ref.watch(themeNotifierProvider);
@@ -116,11 +119,20 @@ class _TopicsScreenState extends ConsumerState<TopicsScreen> {
           AnimationLimiter(
             child: ListView.builder(
               padding: EdgeInsets.fromLTRB(20, topPadding, 20, 32),
-              itemCount: topics.length,
+              itemCount: topics.length + 1,
               itemBuilder: (context, index) {
-                final selectedTopic = topics[index];
+                if (index == 0) return const CatalogStatus();
+                final browsing = topics[index - 1];
+                final selectedTopic = browsing.topic;
                 final topic = selectedTopic.name;
                 final packs = repository.getPacksForTopic(selectedTopic.id);
+                final localIds = packs.map((p) => p.id).toSet();
+                final additionalOnline =
+                    catalog
+                        ?.packsForTopic(selectedTopic.id)
+                        .where((p) => !localIds.contains(p.id))
+                        .length ??
+                    0;
                 final totalAssets = packs.fold<int>(
                   0,
                   (total, pack) =>
@@ -130,7 +142,7 @@ class _TopicsScreenState extends ConsumerState<TopicsScreen> {
                 final icon = AppConstants.getTopicIcon(topic);
 
                 return AnimationConfiguration.staggeredList(
-                  position: index,
+                  position: index - 1,
                   duration: const Duration(milliseconds: 700),
                   child: SlideAnimation(
                     verticalOffset: 60.0,
@@ -146,6 +158,30 @@ class _TopicsScreenState extends ConsumerState<TopicsScreen> {
                           accent: accentColor,
                           packCount: packs.length,
                           totalAssets: totalAssets,
+                          packLabel: browsing.local
+                              ? null
+                              : browsing.unavailableOnline
+                              ? 'Unavailable online'
+                              : catalog?.packsCheckedAt.containsKey(
+                                      selectedTopic.id,
+                                    ) ==
+                                    true
+                              ? '${catalog!.packsForTopic(selectedTopic.id).length} online packs'
+                              : 'Online topic',
+                          itemLabel: browsing.local
+                              ? null
+                              : catalog?.packsCheckedAt.containsKey(
+                                      selectedTopic.id,
+                                    ) ==
+                                    true
+                              ? '${catalog!.packsForTopic(selectedTopic.id).fold<int>(0, (sum, p) => sum + p.cardCount)} catalog items'
+                              : 'Packs not loaded',
+                          catalogLabel:
+                              browsing.local && browsing.unavailableOnline
+                              ? 'Unavailable online'
+                              : browsing.local && additionalOnline > 0
+                              ? '+$additionalOnline online packs'
+                              : null,
                           onTap: () => _navigateToPacks(
                             context,
                             topic,
@@ -205,6 +241,7 @@ class _TopicCard extends StatelessWidget {
   final int packCount;
   final int totalAssets;
   final VoidCallback onTap;
+  final String? packLabel, itemLabel, catalogLabel;
 
   const _TopicCard({
     super.key,
@@ -214,6 +251,9 @@ class _TopicCard extends StatelessWidget {
     required this.packCount,
     required this.totalAssets,
     required this.onTap,
+    this.packLabel,
+    this.itemLabel,
+    this.catalogLabel,
   });
 
   @override
@@ -226,7 +266,7 @@ class _TopicCard extends StatelessWidget {
       glowColor: theme.colorScheme.primary,
       borderRadius: BorderRadius.circular(20),
       child: Container(
-        height: 130,
+        constraints: const BoxConstraints(minHeight: 130),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(20),
           gradient: LinearGradient(
@@ -273,6 +313,8 @@ class _TopicCard extends StatelessWidget {
                   children: [
                     Text(
                       topic,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 22,
                         fontWeight: FontWeight.w800,
@@ -281,17 +323,23 @@ class _TopicCard extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    Row(
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 6,
                       children: [
                         _MetadataChip(
                           icon: Icons.folder_rounded,
-                          label: '$packCount packs',
+                          label: packLabel ?? '$packCount packs',
                         ),
-                        const SizedBox(width: 10),
                         _MetadataChip(
                           icon: Icons.image_rounded,
-                          label: '$totalAssets items',
+                          label: itemLabel ?? '$totalAssets items',
                         ),
+                        if (catalogLabel != null)
+                          _MetadataChip(
+                            icon: Icons.cloud_off_rounded,
+                            label: catalogLabel!,
+                          ),
                       ],
                     ),
                   ],
@@ -347,12 +395,16 @@ class _MetadataChip extends StatelessWidget {
             color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.8),
           ),
           const SizedBox(width: 4),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: theme.colorScheme.onSurfaceVariant,
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
             ),
           ),
         ],

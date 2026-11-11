@@ -5,7 +5,8 @@ import '../../../core/constants/app_constants.dart';
 import '../../../domain/models/pack_selection.dart';
 import '../../../domain/use_cases/select_packs_use_case.dart';
 import '../../../providers/pack_selection_controller.dart';
-import '../../../providers/topic_pack_providers.dart';
+import '../../../providers/catalog_controller.dart';
+import '../../widgets/common/catalog_status.dart';
 import '../../widgets/animations/animated_glass_app_bar_background.dart';
 import '../../widgets/animations/interactive_scale_card.dart';
 import '../../widgets/common/glass_icon_button.dart';
@@ -32,6 +33,16 @@ class _PacksScreenState extends ConsumerState<PacksScreen> {
   String? get topicId => widget.topicId;
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final id = _resolvedTopicId;
+      if (id != null) ref.read(catalogBrowseProvider.notifier).ensurePacks(id);
+    });
+  }
+
+  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     final current = ModalRoute.isCurrentOf(context) ?? true;
@@ -49,17 +60,17 @@ class _PacksScreenState extends ConsumerState<PacksScreen> {
   @override
   Widget build(BuildContext context) {
     final topics = ref
-        .watch(contentRepositoryProvider)
-        .getTopics()
+        .watch(browseTopicsProvider)
         .where(
-          (topic) =>
-              topicId == null ? topic.name == topicName : topic.id == topicId,
+          (row) => topicId == null
+              ? row.topic.name == topicName
+              : row.topic.id == topicId,
         );
-    final id = topics.firstOrNull?.id;
+    final id = topics.firstOrNull?.topic.id;
     _resolvedTopicId = id;
     final packs = id == null
-        ? <PackOption>[]
-        : ref.watch(packOptionsProvider(id));
+        ? <BrowsePack>[]
+        : ref.watch(browsePacksProvider(id));
     final selection = id == null ? null : ref.watch(packSelectionProvider(id));
     final controller = id == null
         ? null
@@ -72,6 +83,10 @@ class _PacksScreenState extends ConsumerState<PacksScreen> {
     final accent = AppConstants.getTopicColor(topicName);
 
     final topPadding = MediaQuery.paddingOf(context).top + kToolbarHeight + 24;
+    final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+    final extendedStatus = packs.any(
+      (pack) => pack.installed && pack.unavailableOnline,
+    );
 
     return Scaffold(
       extendBodyBehindAppBar: true,
@@ -108,9 +123,14 @@ class _PacksScreenState extends ConsumerState<PacksScreen> {
                 SliverPadding(
                   padding: EdgeInsets.fromLTRB(20, topPadding, 20, 16),
                   sliver: SliverToBoxAdapter(
-                    child: selection == null
-                        ? const Text('Topic unavailable.')
-                        : PackSelectionControls(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (id != null) CatalogStatus(topicId: id),
+                        if (selection == null)
+                          const Text('Topic unavailable.')
+                        else
+                          PackSelectionControls(
                             selection: selection,
                             playableCount: playableCount,
                             selectedCount: selection.packIds
@@ -128,18 +148,21 @@ class _PacksScreenState extends ConsumerState<PacksScreen> {
                             onContinue: () =>
                                 _navigateToSetup(context, ref, selection),
                           ),
+                      ],
+                    ),
                   ),
                 ),
                 SliverPadding(
                   padding: const EdgeInsets.fromLTRB(20, 0, 20, 32),
                   sliver: SliverGrid.builder(
-                    gridDelegate:
-                        const SliverGridDelegateWithMaxCrossAxisExtent(
-                          maxCrossAxisExtent: 280,
-                          mainAxisExtent: 184,
-                          crossAxisSpacing: 16,
-                          mainAxisSpacing: 16,
-                        ),
+                    gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                      maxCrossAxisExtent: 280 * textScale,
+                      mainAxisExtent:
+                          (extendedStatus ? 224 : 184) +
+                          (textScale > 1 ? (textScale - 1) * 110 : 0),
+                      crossAxisSpacing: 16,
+                      mainAxisSpacing: 16,
+                    ),
                     itemCount: packs.length,
                     itemBuilder: (context, index) {
                       final option = packs[index];
@@ -160,7 +183,9 @@ class _PacksScreenState extends ConsumerState<PacksScreen> {
                               key: ValueKey('pack-${pack.id}'),
                               packName: pack.name,
                               accent: accent,
-                              assetCount: option.cards.length,
+                              assetCount: option.cardCount,
+                              installed: option.installed,
+                              unavailableOnline: option.unavailableOnline,
                               isAvailable: isAvailable,
                               availability: option.availability,
                               selected:
@@ -245,6 +270,7 @@ class _PackCard extends StatelessWidget {
   final bool isAvailable;
   final PackAvailability availability;
   final bool selected;
+  final bool installed, unavailableOnline;
   final VoidCallback? onTap;
 
   const _PackCard({
@@ -255,6 +281,8 @@ class _PackCard extends StatelessWidget {
     required this.isAvailable,
     required this.availability,
     required this.selected,
+    required this.installed,
+    required this.unavailableOnline,
     this.onTap,
   });
 
@@ -335,10 +363,15 @@ class _PackCard extends StatelessWidget {
                   // Asset count
                   Text(
                     switch (availability) {
-                      PackAvailability.playable => '$assetCount items',
-                      PackAvailability.downloadRequired => 'Download required',
-                      PackAvailability.unavailable => 'Unavailable',
+                      PackAvailability.playable =>
+                        'Installed · $assetCount items${unavailableOnline ? '\nUnavailable online' : ''}',
+                      PackAvailability.downloadRequired => 'Not downloaded',
+                      PackAvailability.unavailable =>
+                        installed ? 'Installed · Unavailable' : 'Unavailable',
                     },
+                    textAlign: TextAlign.center,
+                    maxLines: 4,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w500,

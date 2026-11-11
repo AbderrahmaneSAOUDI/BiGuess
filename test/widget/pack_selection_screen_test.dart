@@ -200,7 +200,7 @@ void main() {
     (tester) async {
       await _mount(tester, compact: true);
       for (final entry in {
-        'remote': 'Download required',
+        'remote': 'Not downloaded',
         'draft': 'Unavailable',
       }.entries) {
         final card = find.byKey(ValueKey('pack-${entry.key}'));

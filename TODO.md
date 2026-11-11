@@ -66,9 +66,11 @@ While this roadmap organizes execution serially for a single-agent workflow, thi
 
 # PHASE E — Connect BiGuess Mobile to remote content distribution
 
-### [ ] T39 — Add anonymous remote catalog and offline-aware Mobile browsing
+### [x] T39 — Add anonymous remote catalog and offline-aware Mobile browsing
 **Agent task:** Add a versioned public content catalog repository and cached Topic/Pack summaries to the existing Mobile app. Players never log into Studio or Firebase. Reuse current Topic/Pack visuals; request data only when discovery is needed or the user explicitly refreshes, not on every rebuild/launch. Clearly label locally installed, unavailable and not-downloaded Packs. Maintain a safe offline view and the existing migration fallback until T47.
 **Acceptance:** Anonymous public read path works, existing offline Packs remain browsable with backend down, private Studio drafts/ownership data never leak, and no automatic launch network dependency is introduced.
+
+**Implementation evidence:** [T39 verification](docs/migration/T39-VERIFICATION.md). Anonymous v1 summaries use origin-separated atomic caches, explicit discovery/Refresh and a once-only missing-list fetch on Topic navigation. Installed content remains authoritative and playable offline; summary-only Packs cannot enter gameplay. Mobile: 280 tests; Studio: 288 tests; both analyzers clean. Public catalog: 5 tests; agent setup: 962 checks; automation: 163 tests. Endpoint configuration is opt-in; no deployment or downloads.
 
 ### [ ] T40 — Implement verified complete Pack downloads
 **Agent task:** Download only published content from public v1 endpoints; check manifest/receipt trust, hashes, sizes, signatures and pinned keys, then atomically install via existing local Pack store. Include progress, retry, timeout, no-space and corruption states; download is user initiated, not automatic. Avoid writing images to public gallery folders.
