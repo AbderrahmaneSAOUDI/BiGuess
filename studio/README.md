@@ -123,16 +123,16 @@ accepts only public client fields, validated before the Flutter build:
   "STUDIO_FIREBASE_PROJECT_ID": "biguess-firebase",
   "STUDIO_FIREBASE_AUTH_DOMAIN": "biguess-firebase.firebaseapp.com",
   "STUDIO_FIREBASE_MESSAGING_SENDER_ID": "230843736734",
-  "STUDIO_API_BASE_URL": ""
+  "STUDIO_API_BASE_URL": "https://biguess-content-production.biguess-api.workers.dev"
 }
 ```
 
 Public Firebase client configuration is expected in JavaScript bundles. Never
 supply service-account keys, OAuth client secrets, Worker credentials or R2
-credentials. Unknown JSON keys are rejected. The API URL intentionally remains
-empty in the live frontend: no production Worker, D1 or private content has been
-released. A future approved integration must set an HTTPS API base URL and match
-its precise CORS origin allowlist before any privileged content request.
+credentials. Unknown JSON keys are rejected. The production API URL above was
+enabled for the owner's dashboard access on 2026-11-11. Its private CORS policy
+allows `https://studio.saoudi.online`; verified Google identity and server-side
+UID/email authorization remain required. An empty API URL disables Studio access.
 
 For a configured local build, save this public JSON outside source and use:
 

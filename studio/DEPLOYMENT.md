@@ -1,5 +1,30 @@
 # Studio static deployment — T26A
 
+## Current production authorization — 2026-11-11
+
+The owner requested live dashboard access and enabled Cloudflare R2. This
+supersedes the historical backend-disabled status in the T26A/T27 evidence below.
+Production uses the dedicated `biguess-content-production` Worker/D1/private R2
+configuration in `../backend/content-api/wrangler.production.json`. Firebase
+project remains `biguess-firebase`; the default super admin email is
+`abderrahmane.saoudi.26@gmail.com`, with its verified Firebase UID pinned in a
+Worker secret. Other identities remain denied unless server-allowlisted.
+
+The GitHub variable `STUDIO_PUBLIC_CONFIG_JSON` supplies the deployed HTTPS API
+origin through `STUDIO_API_BASE_URL`. Its other Firebase fields are preserved.
+Studio must be rebuilt after this variable changes. No server credential or
+owner UID is supplied to the frontend. Private CORS permits only
+`https://studio.saoudi.online`.
+
+The deployed API origin is
+`https://biguess-content-production.biguess-api.workers.dev`.
+
+The content database starts empty; no legacy content, fixtures, signing keys or
+publication operator is deployed. The existing mobile game remains offline.
+See the backend README for explicit deployment and owner revocation commands.
+
+## Historical frontend deployment evidence
+
 Status: **T26A complete**. The static Studio preview is live at
 **https://studio.saoudi.online**, with automatic deployment after passing
 Studio-related pushes to `main`. DNS/TLS, encrypted credentials, live browser

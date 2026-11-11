@@ -60,6 +60,7 @@ const close = async server => {
   await listen(badOriginServer);
   const webOrigin = originOf(webServer);
   const options = {modules:workerModules(path.join(backend,'dist/index.js')),
+    modulesRoot:path.join(backend,'dist'),
     scriptPath:path.join(backend,'dist/index.js'),compatibilityDate:'2026-11-01',
     bindings:{APP_ENV:'staging',FIREBASE_PROJECT_ID:project,STUDIO_USERS:JSON.stringify(users),STUDIO_ALLOWED_ORIGINS:JSON.stringify([webOrigin])},
     d1Databases:{DB:'ingestion-browser-db'},r2Buckets:{CONTENT:'ingestion-browser-images'},

@@ -1,8 +1,39 @@
 # Content API (T20–T25, T27B, T32A)
 
-Isolated TypeScript Cloudflare Worker, D1 migrations and private R2 objects.
-`../biguess-api/` remains the separate legacy game-record API. No Flutter client,
-gameplay dependency, cloud resource, deployment or production credential is added.
+TypeScript Cloudflare Worker, D1 migrations and private R2 objects.
+`../biguess-api/` remains the separate legacy game-record API. The production
+Studio connection is independent of the offline Mobile gameplay path.
+
+## Production Studio access
+
+The owner authorized the production dashboard connection on 2026-11-11.
+`wrangler.production.json` targets the dedicated `biguess-content-production`
+Worker, D1 database and private R2 bucket. Local/staging commands continue to use
+`wrangler.json`; deployment is explicit and is not part of ordinary Git pushes.
+
+The production Worker trusts Firebase project `biguess-firebase`, permits private
+browser requests only from `https://studio.saoudi.online`, and stores
+`STUDIO_SUPER_ADMIN_UID` and `STUDIO_USERS` as Worker secrets. The default owner
+email is `abderrahmane.saoudi.26@gmail.com`; its verified Firebase UID must also
+match. The initial additional-user allowlist is empty.
+
+From this directory, after validation:
+
+```bash
+npx wrangler deploy --config wrangler.production.json --dry-run --outdir /tmp/biguess-production-build
+npx wrangler d1 migrations apply DB --config wrangler.production.json --remote
+npx wrangler deploy --config wrangler.production.json
+```
+
+The frontend's public `STUDIO_API_BASE_URL` must match the deployed HTTPS Worker
+origin. No fixture/content seed, signing private key, publication operator,
+public bucket access or gameplay network client is enabled by this deployment.
+The production origin is
+`https://biguess-content-production.biguess-api.workers.dev`.
+To revoke the default owner, remove its `STUDIO_SUPER_ADMIN_UID` Worker secret
+and any matching `STUDIO_USERS` entry. To disconnect the frontend, clear
+`STUDIO_API_BASE_URL` in GitHub's `STUDIO_PUBLIC_CONFIG_JSON` variable and rebuild
+Studio; server revocation is authoritative for existing clients.
 
 The public catalog implements the frozen [v1 contract](../../contracts/content/v1/README.md).
 Immutable signed publications and anonymous downloads are described in

@@ -12,5 +12,5 @@ export interface Env {
   CONTENT: R2Bucket;
   /** Operator-pinned keyId -> base64 SPKI. No private key in the Worker. */
   PUBLICATION_KEYS?: string;
-  APP_ENV: 'local' | 'staging';
+  APP_ENV: 'local' | 'staging' | 'production';
 }

@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "biguess-content-production",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": {
+    "APP_ENV": "production",
+    "FIREBASE_PROJECT_ID": "biguess-firebase",
+    "STUDIO_ALLOWED_ORIGINS": "[\"https://studio.saoudi.online\"]"
+  },
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "biguess-content-production",
+    "database_id": "8e675746-c88a-4dfa-a428-1e0282d411e5",
+    "migrations_dir": "migrations"
+  }],
+  "r2_buckets": [{
+    "binding": "CONTENT",
+    "bucket_name": "biguess-content-production"
+  }]
+}
