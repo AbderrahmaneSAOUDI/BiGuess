@@ -27,6 +27,10 @@ const joins = `LEFT JOIN studio_creators c ON c.resource_type = e.resource_type 
   LEFT JOIN studio_entities p ON p.resource_type = 'pack' AND p.id = CASE WHEN e.resource_type = 'card' THEN e.parent_id ELSE e.id END
   LEFT JOIN studio_creators pc ON pc.resource_type = 'pack' AND pc.resource_id = p.id`;
 const visible = `(e.resource_type = 'topic' OR (pc.source = 'authenticated' AND pc.created_by_uid = ?))
+  AND NOT EXISTS (SELECT 1 FROM studio_legacy_records q WHERE
+    (q.resource_type=e.resource_type AND q.resource_id=e.id)
+    OR (e.resource_type IN ('pack','card') AND
+      ((q.resource_type='pack' AND q.resource_id=p.id) OR (q.resource_type='topic' AND q.resource_id=p.parent_id))))
   AND e.state IN ('active', 'hidden') AND (e.resource_type != 'card' OR p.state IN ('active', 'hidden'))`;
 const rank = (kind: Kind) => ({ topic: 0, pack: 1, card: 2 })[kind];
 const key = (row: Row) => `${rank(row.resource_type)}:${row.id}`;
@@ -160,7 +164,11 @@ export async function studioRead(request: Request, env: Env, principal: Principa
       const cursor = await unseal(query.cursor, preliminary.cursor_key, binding);
       if (!['resume', 'changes'].includes(cursor.mode) || typeof cursor.position !== 'number'
         || !Number.isSafeInteger(cursor.position) || cursor.position < preliminary.bootstrap_sequence) return expired();
-      const scope = owner ? '1' : `(ch.resource_type = 'topic' OR (ch.pack_creator_uid = ? AND pc.source = 'authenticated' AND pc.created_by_uid = ?))`;
+      const scope = owner ? '1' : `(ch.resource_type = 'topic' OR (ch.pack_creator_uid = ? AND pc.source = 'authenticated' AND pc.created_by_uid = ?))
+        AND NOT EXISTS (SELECT 1 FROM studio_legacy_records q WHERE
+          (q.resource_type=ch.resource_type AND q.resource_id=ch.resource_id)
+          OR (ch.resource_type IN ('pack','card') AND
+            ((q.resource_type='pack' AND q.resource_id=p.id) OR (q.resource_type='topic' AND q.resource_id=p.parent_id))))`;
       const params: (string | number)[] = owner ? [] : [principal.uid, principal.uid];
       const results = await env.DB.batch<Record<string, unknown>>([
         ...common(env, principal),

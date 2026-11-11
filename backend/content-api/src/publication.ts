@@ -1,5 +1,6 @@
 import type { Env } from './env';
 import { captureChange } from './studio-scope';
+import { isLegacyQuarantined } from './legacy-quarantine';
 
 export const immutable = 'public, max-age=31536000, immutable';
 export const hash = async (bytes: Uint8Array): Promise<string> =>
@@ -234,6 +235,7 @@ export async function publish(env: Env, bundle: Bundle, expectedRevision: number
   await verifyReceipt(env, bundle.receipt);
   require(Number.isSafeInteger(expectedRevision) && expectedRevision >= 0);
   const s = bundle.receipt.statement;
+  require(!await isLegacyQuarantined(env,s.topicId,s.packId));
   const manifestBytes = decode(bundle.manifest);
   const archive = decode(bundle.archive);
   await verifyBytes(manifestBytes, s.manifestSha256, s.manifestSizeBytes);

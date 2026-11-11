@@ -1,0 +1,55 @@
+{
+  "protocolVersion": 1,
+  "importId": "778a352a5deddd8ded16932d341f18152a3dc2ec767ac19ee9b584b6a91d22c1",
+  "receipt": {
+    "protocolVersion": 1,
+    "importId": "778a352a5deddd8ded16932d341f18152a3dc2ec767ac19ee9b584b6a91d22c1",
+    "state": "rolled_back",
+    "replayed": false,
+    "recordCount": 1183,
+    "sourceCount": 1174,
+    "objectCount": 1170,
+    "manifestSha256": "778a352a5deddd8ded16932d341f18152a3dc2ec767ac19ee9b584b6a91d22c1",
+    "inventorySha256": "31039b589935989899b2d280fa43cb7f8897c035eedd2651814487724cd9fdc4",
+    "workerSha256": "f2623b2f471b2d63b21d1bd67189740afb22e960189cf2ef5d192244dd529475"
+  },
+  "replay": {
+    "protocolVersion": 1,
+    "importId": "778a352a5deddd8ded16932d341f18152a3dc2ec767ac19ee9b584b6a91d22c1",
+    "state": "rolled_back",
+    "replayed": true,
+    "recordCount": 1183,
+    "sourceCount": 1174,
+    "objectCount": 1170,
+    "manifestSha256": "778a352a5deddd8ded16932d341f18152a3dc2ec767ac19ee9b584b6a91d22c1",
+    "inventorySha256": "31039b589935989899b2d280fa43cb7f8897c035eedd2651814487724cd9fdc4",
+    "workerSha256": "f2623b2f471b2d63b21d1bd67189740afb22e960189cf2ef5d192244dd529475"
+  },
+  "before": [
+    {
+      "state": "hidden",
+      "count": 1183
+    }
+  ],
+  "after": [
+    {
+      "state": "deleted",
+      "count": 1183
+    }
+  ],
+  "importedState": [
+    {
+      "state": "deleted",
+      "revision": 2,
+      "count": 1183
+    }
+  ],
+  "tombstones": 1183,
+  "sourceFilesRetained": true,
+  "sourceCount": 1174,
+  "provenanceRetained": true,
+  "provenanceRecords": 1183,
+  "privateObjectsRetained": true,
+  "privateObjectCount": 1170,
+  "productionPublishing": false
+}

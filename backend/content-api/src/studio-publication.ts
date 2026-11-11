@@ -3,6 +3,7 @@ import { StudioError, type Principal } from './studio-auth';
 import { adminImageReference, captureChange } from './studio-scope';
 import { decode, hash, publish, type Bundle, type Manifest } from './publication';
 import { validatePreparedImage } from './image-validation';
+import { isLegacyQuarantined } from './legacy-quarantine';
 
 type Kind = 'topic' | 'pack';
 interface Entity { resource_type: string; id: string; parent_id: string | null; value: string | null; state: string; revision: number }
@@ -50,6 +51,9 @@ export async function review(env: Env, principal: Principal, kind: Kind, id: str
   const cards = entities.filter(e => e.resource_type === 'card' && e.state === 'active').map(product);
   const fingerprint = await hash(new TextEncoder().encode(canonical({ entity, topic, cards })));
   const errors: string[] = [];
+  if (await isLegacyQuarantined(env,kind==='topic'?id:entity.parent_id!,kind==='pack'?id:undefined)) {
+    errors.push('Legacy content is quarantined. A separate reviewed clearance transition is required before publication.');
+  }
   if (!live(topic)) errors.push('Parent Topic is unavailable.');
   const images = new Set(reads[8].results.map(r => r.object_reference));
   const verified = new Set<string>();

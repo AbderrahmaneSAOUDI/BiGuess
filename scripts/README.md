@@ -201,3 +201,12 @@ For the normal task-completion version bump and scoped commit, follow [the Git w
 - Shorebird and authenticated GitHub CLI only for the publishing operations that use them.
 
 Run `./scripts/run.sh <tool> --help` for the options of a specific command.
+
+### Private legacy quarantine import (T38)
+
+`import_legacy_content.mjs` verifies the T05 inventory, preserves T06 runtime IDs,
+reuses the T32 browser worker, and imports all legacy sources into an external,
+persistent local Owner-only quarantine store. It has no cloud or publish mode.
+`--rollback` creates a guarded, evidence-preserving local rollback report.
+See [the operator runbook](../backend/content-api/LEGACY-IMPORT.md) and
+[T38 acceptance evidence](../docs/migration/T38-VERIFICATION.md).

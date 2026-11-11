@@ -58,9 +58,11 @@ While this roadmap organizes execution serially for a single-agent workflow, thi
 
 **Implementation evidence:** [T37 verification](studio/T37-VERIFICATION.md) and [profile API contract](contracts/studio/v1/profile.md). Local Workerd/D1 tests reconcile immutable audit counts and enforce actor scope; Chromium verifies two Collectors, Owner filtering, pagination and access changes. No backend deployment or remote migration.
 
-### [ ] T38 — GATE: Import legacy content as private Owner-controlled drafts
+### [x] T38 — GATE: Import legacy content as private Owner-controlled drafts
 **Agent task:** Reuse the T05 inventory, stable T06 IDs and T32 pipeline to import the existing 922 Anime and 252 Flags assets **only into quarantined, nonpublic Owner-controlled drafts**, unless individual content is confirmed cleared. Do not assign legacy material to arbitrary Collectors or let it appear in their own-contribution lists without an explicit later approved ownership process. Preserve original files, mappings, provenance, import checksums and rollback report. Only rights-cleared fixtures may be released in a test catalog.
 **Acceptance:** All 1174 sources are accounted for or deviations explained; imports are repeatable and owner-scoped; zero uncleared assets can be publicly discovered/downloaded; no production publishing.
+
+**Implementation evidence:** [T38 verification](docs/migration/T38-VERIFICATION.md), [private local operator runbook](backend/content-api/LEGACY-IMPORT.md), and committed source mappings/import/repeat/rollback reports. All 1174 sources were imported into persistent local Owner-only quarantine; no backend deployment, remote migration or production publishing.
 
 # PHASE E — Connect BiGuess Mobile to remote content distribution
 

@@ -2,7 +2,7 @@ import type { Env } from './env';
 import { StudioError, type Principal } from './studio-auth';
 
 type ScopeBatch = { aggregate: {resourceType: string; id: string};
-  operations: {resourceType: string; id: string; action: string}[] };
+  operations: {resourceType: string; id: string; action: string; value?: {topicId?: string}}[] };
 
 export function scopeReads(env: Env, batch: ScopeBatch): D1PreparedStatement[] {
   return [
@@ -13,13 +13,18 @@ export function scopeReads(env: Env, batch: ScopeBatch): D1PreparedStatement[] {
       LEFT JOIN studio_creators c ON c.resource_type='pack' AND c.resource_id=e.parent_id
       WHERE e.resource_type='card' AND e.id IN (SELECT value FROM json_each(?))`)
       .bind(JSON.stringify(batch.operations.filter(o => o.resourceType === 'card').map(o => o.id))),
+    env.DB.prepare(`SELECT resource_id FROM studio_legacy_records WHERE resource_type='topic' AND
+      (resource_id IN (SELECT parent_id FROM studio_entities WHERE resource_type='pack' AND id=?)
+       OR resource_id IN (SELECT value FROM json_each(?)))`).bind(batch.aggregate.id,
+        JSON.stringify(batch.operations.filter(o=>o.resourceType==='pack').map(o=>o.value?.topicId).filter(Boolean))),
   ];
 }
 
 /** Pack creator is authority; a Card's own creator never grants access. */
 export function assertBatchScope(principal: Principal, batch: ScopeBatch,
-  pack: unknown[], cards: unknown[], replay = false): void {
+  pack: unknown[], cards: unknown[], replay = false, quarantined: unknown[] = []): void {
   if (principal.role === 'owner_admin') return;
+  if (quarantined.length) throw new StudioError(404,'not_found');
   if (batch.aggregate.resourceType !== 'pack') throw new StudioError(403, 'forbidden');
   const row = pack[0] as {state: string; created_by_uid: string|null; source: string}|undefined;
   if (row ? row.source !== 'authenticated' || row.created_by_uid !== principal.uid
@@ -38,8 +43,8 @@ export function assertBatchScope(principal: Principal, batch: ScopeBatch,
 export async function checkBatchScope(env: Env, principal: Principal, batch: ScopeBatch,
   replay = false): Promise<void> {
   if (principal.role === 'owner_admin') return;
-  const [pack, cards] = await env.DB.batch(scopeReads(env,batch));
-  assertBatchScope(principal,batch,pack.results,cards.results,replay);
+  const [pack, cards, quarantined] = await env.DB.batch(scopeReads(env,batch));
+  assertBatchScope(principal,batch,pack.results,cards.results,replay,quarantined.results);
 }
 
 /** Public wire shape stays compatible; this identifier is not the R2 object key. */

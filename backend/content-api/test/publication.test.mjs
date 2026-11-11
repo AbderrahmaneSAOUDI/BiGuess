@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { readFileSync, writeFileSync, cpSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, cpSync, mkdtempSync, rmSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -50,7 +50,7 @@ async function setup(t) {
     d1Databases: { DB: 'publication-test' }, r2Buckets: { CONTENT: 'publication-test' } }));
   t.after(() => mf.dispose());
   const db = await mf.getD1Database('DB');
-  for (const file of ['0002_catalog.sql', '0003_publications.sql', '0004_studio.sql', '0005_distribution.sql', '0006_studio_scope.sql']) {
+  for (const file of readdirSync(`${root}migrations`).filter(file => file.endsWith('.sql')).sort()) {
     const sql = readFileSync(new URL(`../migrations/${file}`, import.meta.url), 'utf8')
       .split('\n').filter(line => !line.trim().startsWith('--')).join(' ');
     await db.exec(sql);

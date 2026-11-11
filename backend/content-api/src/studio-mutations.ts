@@ -170,7 +170,7 @@ export async function mutate(request: Request, env: Env, principal: Principal, r
     const entities = new Map((reads[1].results as Entity[]).map(e => [keyOf(e.resource_type, e.id), e]));
     const aggregateKey = keyOf(aggregate.resourceType, aggregate.id);
     const current = entities.get(aggregateKey);
-    assertBatchScope(principal,batch,reads[2].results,reads[3].results);
+    assertBatchScope(principal,batch,reads[2].results,reads[3].results,false,reads[4].results);
     if ((current?.revision ?? 0) !== expected) throw new MutationError(412, 'revision_conflict', 'Refresh the aggregate before committing.', current?.revision ?? null);
     if (current?.state === 'purged') throw new MutationError(410, 'deleted', 'This identity was permanently deleted.');
     if (expected === 0 && !batch.operations.some(op => op.resourceType === aggregate.resourceType && op.id === aggregate.id && op.action === 'create')) fail('New aggregates require their create operation.');
