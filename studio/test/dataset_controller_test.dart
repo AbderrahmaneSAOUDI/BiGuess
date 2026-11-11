@@ -222,6 +222,230 @@ void main() {
     await factory.deleteDatabase(dbName);
   });
 
+  for (final role in ['collector', 'owner_admin']) {
+    test('$role offline edit, explicit Commit and Refresh', () async {
+      authorization.role = role;
+      await connect();
+      online = false;
+      await session.validate();
+      await waitFor(() => controller.phase == DatasetPhase.offline);
+      await controller.saveDraft(
+        controller.snapshot!.records.last,
+        name: 'Edited',
+      );
+      final draft = controller.snapshot!.drafts.single;
+      await controller.queueDraft(draft.id);
+      var writes = 0;
+      api.batchHandler = (token, key, revision, batch, active) async {
+        writes++;
+        expect(revision, 1);
+        expect((batch['aggregate'] as Map)['id'], 'pack-a');
+        expect((batch['operations'] as List).single['value']['name'], 'Edited');
+        api.handler = (_, _) async => InitialDataset([
+          records('a').first,
+          {...records('a').last, 'name': 'Edited', 'revision': 2},
+        ], 'after-commit');
+        return const BatchCommitResult(
+          revision: 2,
+          committedAt: '2026-11-11T12:00:00Z',
+          actorId: 'a',
+        );
+      };
+      expect(writes, 0);
+      online = true;
+      await controller.commit();
+      expect(writes, 1);
+      expect(controller.errorCode, isNull);
+      expect(controller.snapshot!.drafts, isEmpty);
+      expect(controller.snapshot!.pendingCommit, isNull);
+      expect(controller.snapshot!.lastCommittedAt, isNotNull);
+      await controller.refresh();
+      expect(writes, 1);
+      expect(controller.snapshot!.records.last['name'], 'Edited');
+    });
+  }
+
+  test(
+    'uncertain Commit survives reload and replays identical key/body/revision',
+    () async {
+      await connect();
+      await controller.saveDraft(
+        controller.snapshot!.records.last,
+        name: 'Edited',
+      );
+      await controller.queueDraft(controller.snapshot!.drafts.single.id);
+      final attempts = <String>[];
+      api.batchHandler = (token, key, revision, batch, active) async {
+        attempts.add(jsonEncode([key, revision, batch]));
+        throw const DatasetApiFailure('commit-unavailable');
+      };
+      await controller.commit();
+      expect(controller.snapshot!.pendingCommit, isNotNull);
+      final persisted = (await store().read(controller.scope!))!;
+      expect(
+        DatasetSnapshot.fromJson(persisted.toJson()).pendingCommit,
+        isNotNull,
+      );
+      controller.dispose();
+      controller = createController()..start();
+      await waitFor(() => controller.phase == DatasetPhase.ready);
+      await controller.commit();
+      expect(attempts, hasLength(2));
+      expect(attempts[1], attempts[0]);
+      expect(controller.snapshot!.drafts, hasLength(1));
+    },
+  );
+
+  for (final code in ['draft-conflict', 'idempotency-conflict']) {
+    test(
+      '$code retains local content and blocks automatic overwrite',
+      () async {
+        await connect();
+        await controller.saveDraft(
+          controller.snapshot!.records.last,
+          name: 'Edited',
+        );
+        await controller.queueDraft(controller.snapshot!.drafts.single.id);
+        var calls = 0;
+        api.batchHandler = (_, _, _, _, _) async {
+          calls++;
+          throw DatasetApiFailure(code);
+        };
+        await controller.commit();
+        expect(controller.errorCode, code);
+        expect(controller.snapshot!.drafts.single.value['name'], 'Edited');
+        expect(controller.snapshot!.drafts.single.status, DraftStatus.conflict);
+        expect(controller.snapshot!.pendingCommit, isNull);
+        await controller.commit();
+        expect(calls, 1);
+      },
+    );
+  }
+
+  test('reauthorization of cached workspace does not fetch content', () async {
+    await connect();
+    final calls = api.calls;
+    await session.validate(refresh: true);
+    await waitFor(() => controller.phase == DatasetPhase.ready);
+    expect(api.calls, calls);
+    await controller.refresh();
+    expect(api.calls, calls + 1);
+  });
+
+  test('Commit checks revocation before sending a batch', () async {
+    await connect();
+    await controller.saveDraft(
+      controller.snapshot!.records.last,
+      name: 'Edited',
+    );
+    await controller.queueDraft(controller.snapshot!.drafts.single.id);
+    var writes = 0;
+    api.batchHandler = (_, _, _, _, _) async {
+      writes++;
+      throw StateError('must not send');
+    };
+    authorization.failure = 'forbidden';
+    await controller.commit();
+    expect(writes, 0);
+    expect(controller.snapshot, isNull);
+  });
+
+  test('stale dashboard editor cannot rebase text after Refresh', () async {
+    await connect();
+    final stale = controller.snapshot!.records.last;
+    api.handler = (_, _) async =>
+        InitialDataset(records('a', revision: 2), 'new');
+    await controller.refresh();
+    await expectLater(
+      controller.saveDraft(stale, name: 'Stale edit'),
+      throwsA(storageFailure('draft-conflict')),
+    );
+    expect(controller.snapshot!.drafts, isEmpty);
+  });
+
+  test('stale tab Commit does not submit another tabs changed queue', () async {
+    await connect();
+    await controller.saveDraft(
+      controller.snapshot!.records.last,
+      name: 'Tab one',
+    );
+    await controller.queueDraft(controller.snapshot!.drafts.single.id);
+    final other = store();
+    final prior = (await other.read(controller.scope!))!;
+    await other.save(
+      prior.copyWith(
+        drafts: [
+          prior.drafts.single.copyWith(
+            value: {'name': 'Tab two', 'topicId': 'topic'},
+          ),
+        ],
+      ),
+      expectedVersion: prior.version,
+    );
+    var writes = 0;
+    api.batchHandler = (_, _, _, _, _) async {
+      writes++;
+      throw StateError('must not send');
+    };
+    await controller.commit();
+    expect(writes, 0);
+    expect(controller.errorCode, 'storage-conflict');
+    expect(
+      (await other.read(controller.scope!))!.drafts.single.value['name'],
+      'Tab two',
+    );
+  });
+
+  test(
+    'network action lock blocks overlapping uploads and duplicate Commit',
+    () async {
+      await connect();
+      await controller.saveDraft(
+        controller.snapshot!.records.last,
+        name: 'Edit',
+      );
+      await controller.queueDraft(controller.snapshot!.drafts.single.id);
+      final gate = Completer<BatchCommitResult>();
+      var calls = 0;
+      api.batchHandler = (_, _, _, _, _) {
+        calls++;
+        return gate.future;
+      };
+      final operation = controller.commit();
+      await waitFor(() => calls == 1);
+      await controller.commit();
+      await controller.refresh();
+      await expectLater(
+        controller.uploadCardImage('any'),
+        throwsA(storageFailure('sync-busy')),
+      );
+      expect(calls, 1);
+      gate.completeError(const DatasetApiFailure('commit-unavailable'));
+      await operation;
+      expect(controller.busy, false);
+      expect(controller.snapshot!.pendingCommit, isNotNull);
+    },
+  );
+
+  test('Topic dialogs retain their opened revision across Refresh', () async {
+    authorization.role = 'owner_admin';
+    await connect();
+    api.handler = (_, _) async => InitialDataset([
+      {...records('a').first, 'revision': 2},
+      records('a').last,
+    ], 'new');
+    await controller.refresh();
+    await expectLater(
+      controller.renameTopic('topic', 'Stale', expectedRevision: 1),
+      throwsA(storageFailure('draft-conflict')),
+    );
+    await expectLater(
+      controller.deleteTopic('topic', expectedRevision: 1),
+      throwsA(storageFailure('draft-conflict')),
+    );
+    expect(controller.snapshot!.drafts, isEmpty);
+  });
+
   test('initial sync promotes only after the complete dataset is returned and saved', () async {
     final incoming = Completer<InitialDataset>();
     api.handler = (_, _) => incoming.future;
@@ -1114,13 +1338,16 @@ void main() {
     );
     expect(controller.snapshot, isNull);
   });
-  test('name editing derives parent revision and state from stored record instead of caller data', () async {
+  test('name editing rejects stale revision and derives parent/state from stored record', () async {
     await connect();
     final pack = controller.snapshot!.records.last;
+    await expectLater(
+      controller.saveDraft({...pack, 'revision': 999}, name: 'Stale'),
+      throwsA(storageFailure('draft-conflict')),
+    );
     await controller.saveDraft({
       ...pack,
       'topicId': 'forged-topic',
-      'revision': 999,
       'state': 'purged',
     }, name: 'Legitimate rename');
     final draft = controller.snapshot!.drafts.single;
@@ -1276,7 +1503,6 @@ void main() {
     await controller.saveDraft({
       ...controller.snapshot!.records.last,
       'packId': 'pack-b',
-      'revision': 999,
     }, name: 'Renamed replacement');
     expect(controller.cards.single.difficulty, 3);
     expect(controller.cards.single.localImage!.base64, pixelPng);

@@ -36,11 +36,140 @@ abstract interface class DatasetApi {
   void close();
 }
 
+abstract interface class IncrementalDatasetApi {
+  Future<InitialDataset> changes(
+    String token,
+    List<Map<String, Object?>> records,
+    String cursor,
+    bool Function() current, {
+    bool owner = false,
+  });
+}
+
 /// All pages stage in memory; callers promote only a complete, validated scan.
-class WorkerDatasetApi implements DatasetApi {
+class WorkerDatasetApi implements DatasetApi, IncrementalDatasetApi {
   WorkerDatasetApi(this.base, this.client);
   final Uri base;
   final http.Client client;
+
+  @override
+  Future<InitialDataset> changes(
+    String token,
+    List<Map<String, Object?>> records,
+    String cursor,
+    bool Function() current, {
+    bool owner = false,
+  }) async {
+    try {
+      return await _changes(token, records, cursor, current, owner);
+    } on DatasetApiFailure catch (error) {
+      // An expired or changed scope cursor cannot be repaired locally. Stage a
+      // fresh authorized snapshot, retaining the caller's last good dataset.
+      if (error.code != 'cursor_expired') rethrow;
+      return initial(token, current);
+    }
+  }
+
+  Future<InitialDataset> _changes(
+    String token,
+    List<Map<String, Object?>> records,
+    String cursor,
+    bool Function() current,
+    bool owner,
+  ) async {
+    String key(Map<String, Object?> record) =>
+        jsonEncode([record['resourceType'], record['id']]);
+    final staged = {for (final record in records) key(record): record};
+    final revisions = {
+      for (final record in records) key(record): record['revision']! as int,
+    };
+    final cursors = {cursor};
+    while (true) {
+      if (!current()) throw const DatasetApiFailure('cancelled');
+      final uri = base
+          .resolve('/studio/v1/sync/changes')
+          .replace(queryParameters: {'limit': '100', 'cursor': cursor});
+      final response = await client
+          .get(uri, headers: {'Authorization': 'Bearer $token'})
+          .timeout(const Duration(seconds: 20));
+      if (!current()) throw const DatasetApiFailure('cancelled');
+      if (response.statusCode == 401) {
+        throw const DatasetApiFailure('session-expired');
+      }
+      if (response.statusCode == 403) {
+        throw const DatasetApiFailure('forbidden');
+      }
+      if (response.statusCode == 409) {
+        throw const DatasetApiFailure('cursor_expired');
+      }
+      if (response.statusCode != 200) {
+        throw const DatasetApiFailure('sync-unavailable');
+      }
+      try {
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        if (body['protocolVersion'] != 1 ||
+            body['scopeVersion'] != 1 ||
+            body['items'] is! List ||
+            !(body['nextCursor'] == null || body['nextCursor'] is String) ||
+            !(body['resumeCursor'] == null || body['resumeCursor'] is String)) {
+          throw const FormatException();
+        }
+        for (final item in body['items'] as List) {
+          final event = Map<String, Object?>.from(item as Map);
+          final Map<String, Object?> record;
+          if (event['kind'] == 'upsert' &&
+              event.length == 2 &&
+              event['record'] is Map) {
+            record = Map<String, Object?>.from(event['record'] as Map);
+            validateDatasetRecord(record);
+          } else if (event['kind'] == 'remove' &&
+              event.length == 4 &&
+              {'topic', 'pack', 'card'}.contains(event['resourceType']) &&
+              event['id'] is String &&
+              (event['id'] as String).isNotEmpty &&
+              event['revision'] is int &&
+              (event['revision'] as int) > 0) {
+            record = event;
+          } else {
+            throw const FormatException();
+          }
+          if (owner && event['kind'] == 'remove') {
+            // The feed's minimal tombstones omit lifecycle fields that Owner
+            // needs for restore/purge review. Rebuild that complete view rather
+            // than dropping deleted records from the administrative workspace.
+            throw const DatasetApiFailure('cursor_expired');
+          }
+          final id = key(record);
+          final revision = record['revision']! as int;
+          // A locally acknowledged Commit may already be ahead of older feed
+          // events. Retain its newer projection until the feed catches up.
+          if (revision < (revisions[id] ?? 0)) continue;
+          revisions[id] = revision;
+          if (event['kind'] == 'remove') {
+            staged.remove(id);
+          } else {
+            staged[id] = Map.unmodifiable(record);
+          }
+        }
+        final next = body['nextCursor'] as String?;
+        final resume = body['resumeCursor'] as String?;
+        if (next == null) {
+          if (resume == null || resume.isEmpty) throw const FormatException();
+          final result = staged.values.toList(growable: false);
+          validateDatasetRelationships(result);
+          return InitialDataset(List.unmodifiable(result), resume);
+        }
+        if (next.isEmpty || resume != null || !cursors.add(next)) {
+          throw const FormatException();
+        }
+        cursor = next;
+      } on FormatException {
+        throw const DatasetApiFailure('invalid-dataset');
+      } on TypeError {
+        throw const DatasetApiFailure('invalid-dataset');
+      }
+    }
+  }
 
   @override
   Future<InitialDataset> initial(String token, bool Function() current) async {
@@ -138,7 +267,10 @@ class WorkerDatasetApi implements DatasetApi {
             'Authorization': 'Bearer $token',
             'Content-Type': 'application/json',
             'Idempotency-Key': idempotencyKey,
-            'If-Match': '"rev-$revision"',
+            if (revision == 0)
+              'If-None-Match': '*'
+            else
+              'If-Match': '"rev-$revision"',
           },
           body: body,
         )

@@ -64,25 +64,29 @@ class TopicUiController extends ChangeNotifier implements DatasetController {
   }
 
   @override
-  Future<void> renameTopic(String id, String name) async {
+  Future<void> renameTopic(
+    String id,
+    String name, {
+    int? expectedRevision,
+  }) async {
     _save();
     renames++;
   }
 
   @override
-  Future<void> hideTopic(String id) async {
+  Future<void> hideTopic(String id, {int? expectedRevision}) async {
     _save();
     hides++;
   }
 
   @override
-  Future<void> deleteTopic(String id) async {
+  Future<void> deleteTopic(String id, {int? expectedRevision}) async {
     _save();
     deletes++;
   }
 
   @override
-  Future<void> restoreTopic(String id) async {
+  Future<void> restoreTopic(String id, {int? expectedRevision}) async {
     _save();
     restores++;
   }

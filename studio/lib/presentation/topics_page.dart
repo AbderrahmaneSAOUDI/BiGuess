@@ -197,7 +197,10 @@ class _TopicsPageState extends State<TopicsPage> {
                           TextButton(
                             onPressed: () => _run(
                               context,
-                              () => controller.hideTopic(topic.id),
+                              () => controller.hideTopic(
+                                topic.id,
+                                expectedRevision: topic.revision,
+                              ),
                             ),
                             child: const Text('Hide Topic'),
                           ),
@@ -349,15 +352,22 @@ class _TopicDialogState extends State<_TopicDialog> {
     });
     try {
       if (widget.restore == true) {
-        await widget.controller.restoreTopic(widget.topic!.id);
+        await widget.controller.restoreTopic(
+          widget.topic!.id,
+          expectedRevision: widget.topic!.revision,
+        );
       } else if (widget.restore == false) {
-        await widget.controller.deleteTopic(widget.topic!.id);
+        await widget.controller.deleteTopic(
+          widget.topic!.id,
+          expectedRevision: widget.topic!.revision,
+        );
       } else if (widget.topic == null) {
         await widget.controller.createTopic(_name.text.trim());
       } else {
         await widget.controller.renameTopic(
           widget.topic!.id,
           _name.text.trim(),
+          expectedRevision: widget.topic!.revision,
         );
       }
       if (mounted && !_closed) Navigator.of(context).pop();

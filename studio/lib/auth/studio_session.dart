@@ -69,7 +69,6 @@ class StudioSession extends ChangeNotifier {
       : null;
   StreamSubscription<String?>? _subscription;
   StreamSubscription<bool>? _connectionSubscription;
-  Timer? _timer;
   int _generation = 0;
   bool _disposed = false;
   bool _suspended = false;
@@ -114,11 +113,6 @@ class StudioSession extends ChangeNotifier {
         _clear(SessionPhase.error, 'session-expired');
       },
     );
-    _timer = Timer.periodic(recheckInterval, (_) {
-      if (!_suspended && phase == SessionPhase.authorized) {
-        unawaited(validate(refresh: true));
-      }
-    });
   }
 
   Future<void> validate({bool refresh = false}) async {
@@ -231,7 +225,6 @@ class StudioSession extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _generation++;
-    _timer?.cancel();
     unawaited(_subscription?.cancel());
     unawaited(_connectionSubscription?.cancel());
     super.dispose();

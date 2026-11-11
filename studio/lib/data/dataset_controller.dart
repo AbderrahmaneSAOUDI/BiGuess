@@ -47,7 +47,23 @@ class DatasetController extends ChangeNotifier {
   DatasetSnapshot? snapshot;
   DatasetPhase phase = DatasetPhase.idle;
   String? errorCode;
-  bool get busy => phase == DatasetPhase.loading;
+  bool _networkBusy = false;
+  bool get busy => _networkBusy || phase == DatasetPhase.loading;
+
+  Future<T> _exclusive<T>(Future<T> Function() action) async {
+    if (busy || uploadingImageDraftId != null) {
+      throw const DatasetStorageFailure('sync-busy');
+    }
+    _networkBusy = true;
+    _notify();
+    try {
+      return await action();
+    } finally {
+      _networkBusy = false;
+      _notify();
+    }
+  }
+
   DatasetStore? _store;
   String? _lastUid;
   int _epoch = 0;
@@ -183,7 +199,9 @@ class DatasetController extends ChangeNotifier {
       }
       phase = offline ? DatasetPhase.offline : DatasetPhase.ready;
       _notify();
-      if (!offline && _autoSyncedNamespace != target.namespace) {
+      if (!offline &&
+          cached == null &&
+          _autoSyncedNamespace != target.namespace) {
         _autoSyncedNamespace = target.namespace;
         await _sync(epoch);
       }
@@ -201,13 +219,160 @@ class DatasetController extends ChangeNotifier {
 
   Future<void> refresh() async {
     if (_disposed || busy) return;
-    final serial = _syncSerial;
-    await session.validate(refresh: true);
-    await _handling;
-    if (session.phase != SessionPhase.authorized || scope == null || busy) {
-      return;
-    }
-    if (_syncSerial == serial) await _sync(_epoch);
+    await _exclusive(() async {
+      final serial = _syncSerial;
+      await session.validate(refresh: true);
+      await _handling;
+      if (session.phase != SessionPhase.authorized ||
+          scope == null ||
+          phase == DatasetPhase.loading) {
+        return;
+      }
+      if (_syncSerial == serial) await _sync(_epoch);
+    });
+  }
+
+  /// A persisted intent is retried verbatim, including after a lost response or
+  /// reload. Never rebase an uncertain write onto a freshly fetched revision.
+  Future<void> commit() async {
+    if (_disposed || busy) return;
+    final observed = snapshot;
+    await _exclusive(() async {
+      await session.validate(refresh: true);
+      await _handling;
+      if (session.phase != SessionPhase.authorized ||
+          scope == null ||
+          snapshot == null) {
+        return;
+      }
+      if (observed == null ||
+          observed.scope.namespace != scope!.namespace ||
+          observed.version != snapshot!.version) {
+        errorCode = 'storage-conflict';
+        _notify();
+        return;
+      }
+      final epoch = _epoch;
+      try {
+        while (_current(epoch)) {
+          var prior = snapshot!;
+          var intent = prior.pendingCommit;
+          if (intent == null) {
+            final draft = prior.drafts
+                .where((d) => d.status == DraftStatus.unsent)
+                .firstOrNull;
+            if (draft == null) break;
+            _validateQueuedDraft(draft);
+            if (draft.localImage != null && draft.uploadedImage == null) {
+              throw const DatasetStorageFailure('image-upload-required');
+            }
+            final kind = draft.resourceType == 'card'
+                ? 'pack'
+                : draft.resourceType;
+            final id = draft.resourceType == 'card'
+                ? draft.value['packId']
+                : draft.resourceId;
+            final aggregate = prior.records
+                .where((r) => r['resourceType'] == kind && r['id'] == id)
+                .firstOrNull;
+            final value = draft.resourceType == 'card'
+                ? _cardValue(draft.value)
+                : draft.resourceType == 'pack'
+                ? {
+                    'name': draft.value['name'],
+                    'topicId': draft.value['topicId'],
+                  }
+                : {'name': draft.value['name']};
+            intent = {
+              'key': _uuidV4(),
+              'draftId': draft.id,
+              'revision': aggregate?['revision'] ?? 0,
+              'batch': {
+                'protocolVersion': 1,
+                'aggregate': {'resourceType': kind, 'id': id},
+                'operations': [
+                  {
+                    'resourceType': draft.resourceType,
+                    'id': draft.resourceId,
+                    'action': draft.action,
+                    if ({'create', 'update'}.contains(draft.action))
+                      'value': value,
+                  },
+                ],
+              },
+            };
+            final saved = await _store!.save(
+              prior.copyWith(pendingCommit: intent),
+              expectedVersion: prior.version,
+            );
+            if (!_current(epoch)) return;
+            snapshot = saved;
+            prior = saved;
+          }
+          final target = scope!;
+          final token = session.tokenFor(target.uid, target.role);
+          if (token == null) throw const DatasetApiFailure('session-expired');
+          final result = await api.commitBatch(
+            token,
+            idempotencyKey: intent['key']! as String,
+            revision: intent['revision']! as int,
+            batch: Map<String, Object?>.from(intent['batch']! as Map),
+            current: () =>
+                _current(epoch) && session.phase == SessionPhase.authorized,
+          );
+          if (!_current(epoch)) return;
+          // Promotion and queue acknowledgement share one storage transaction.
+          // Failed refresh keeps the intent so the next Commit replays the key.
+          await _sync(
+            epoch,
+            acknowledged: intent['draftId']! as String,
+            committedAt: DateTime.parse(result.committedAt),
+          );
+          if (!_current(epoch) || errorCode != null) break;
+        }
+      } catch (error) {
+        if (!_current(epoch)) return;
+        final code = _code(error);
+        if ({
+          'forbidden',
+          'session-expired',
+          'storage-revoked',
+        }.contains(code)) {
+          session.rejectAuthorization(
+            code == 'storage-revoked' ? 'scope-changed' : code,
+          );
+          return;
+        }
+        if ({'draft-conflict', 'idempotency-conflict'}.contains(code)) {
+          final prior = snapshot!;
+          final id = prior.pendingCommit?['draftId'];
+          try {
+            final saved = await _store!.save(
+              prior.copyWith(
+                clearPendingCommit: true,
+                drafts: prior.drafts
+                    .map(
+                      (d) => d.id == id
+                          ? d.copyWith(status: DraftStatus.conflict)
+                          : d,
+                    )
+                    .toList(),
+              ),
+              expectedVersion: prior.version,
+            );
+            if (!_current(epoch)) return;
+            snapshot = saved;
+          } catch (storageError) {
+            if (!_current(epoch)) return;
+            errorCode = _code(storageError);
+            _notify();
+            return;
+          }
+        }
+        errorCode = code;
+        _notify();
+      }
+    });
   }
 
   Future<void> retryStorage() async {
@@ -215,7 +380,11 @@ class DatasetController extends ChangeNotifier {
     await refresh();
   }
 
-  Future<void> _sync(int epoch) async {
+  Future<void> _sync(
+    int epoch, {
+    String? acknowledged,
+    DateTime? committedAt,
+  }) async {
     final target = scope;
     final store = _store;
     if (target == null ||
@@ -231,10 +400,19 @@ class DatasetController extends ChangeNotifier {
       final token = session.tokenFor(target.uid, target.role);
       if (!_current(epoch)) return;
       if (token == null) throw const DatasetApiFailure('session-expired');
-      final incoming = await api.initial(
-        token,
-        () => _current(epoch) && session.phase == SessionPhase.authorized,
-      );
+      final prior = snapshot;
+      bool active() =>
+          _current(epoch) && session.phase == SessionPhase.authorized;
+      final incoming =
+          api is IncrementalDatasetApi && prior?.resumeCursor != null
+          ? await (api as IncrementalDatasetApi).changes(
+              token,
+              prior!.records,
+              prior.resumeCursor!,
+              active,
+              owner: target.role == 'owner_admin',
+            )
+          : await api.initial(token, active);
       if (!_current(epoch)) return;
       // The allowlist can change between /session and the first dataset page.
       // Recheck before promoting data or displaying retained Owner drafts.
@@ -245,36 +423,43 @@ class DatasetController extends ChangeNotifier {
         return;
       }
       _validate(incoming.records, target);
-      final prior = snapshot;
       final byId = {
         for (final r in incoming.records)
           jsonEncode([r['resourceType'], r['id']]): r,
       };
-      final drafts = (prior?.drafts ?? <LocalDraft>[]).map((draft) {
-        final remote = byId[jsonEncode([draft.resourceType, draft.resourceId])];
-        final parent =
-            {'pack', 'card'}.contains(draft.resourceType) &&
-                draft.action == 'create'
-            ? incoming.records
-                  .where(
-                    (r) =>
-                        r['resourceType'] ==
-                            (draft.resourceType == 'pack' ? 'topic' : 'pack') &&
-                        r['id'] ==
-                            draft.value[draft.resourceType == 'pack'
-                                ? 'topicId'
-                                : 'packId'],
-                  )
-                  .firstOrNull
-            : null;
-        final conflict = draft.action == 'create'
-            ? remote != null ||
-                  ({'pack', 'card'}.contains(draft.resourceType) &&
-                      (parent == null ||
-                          !{'active', 'hidden'}.contains(parent['state'])))
-            : remote == null || remote['revision'] != draft.baseRevision;
-        return conflict ? draft.copyWith(status: DraftStatus.conflict) : draft;
-      }).toList();
+      final drafts = (prior?.drafts ?? <LocalDraft>[])
+          .where((d) => d.id != acknowledged)
+          .map((draft) {
+            final remote =
+                byId[jsonEncode([draft.resourceType, draft.resourceId])];
+            final parent =
+                {'pack', 'card'}.contains(draft.resourceType) &&
+                    draft.action == 'create'
+                ? incoming.records
+                      .where(
+                        (r) =>
+                            r['resourceType'] ==
+                                (draft.resourceType == 'pack'
+                                    ? 'topic'
+                                    : 'pack') &&
+                            r['id'] ==
+                                draft.value[draft.resourceType == 'pack'
+                                    ? 'topicId'
+                                    : 'packId'],
+                      )
+                      .firstOrNull
+                : null;
+            final conflict = draft.action == 'create'
+                ? remote != null ||
+                      ({'pack', 'card'}.contains(draft.resourceType) &&
+                          (parent == null ||
+                              !{'active', 'hidden'}.contains(parent['state'])))
+                : remote == null || remote['revision'] != draft.baseRevision;
+            return conflict
+                ? draft.copyWith(status: DraftStatus.conflict)
+                : draft;
+          })
+          .toList();
       final next = DatasetSnapshot(
         scope: target,
         records: incoming.records,
@@ -282,6 +467,8 @@ class DatasetController extends ChangeNotifier {
         resumeCursor: incoming.resumeCursor,
         lastSyncedAt: DateTime.now().toUtc(),
         version: prior?.version ?? 0,
+        pendingCommit: acknowledged == null ? prior?.pendingCommit : null,
+        lastCommittedAt: committedAt ?? prior?.lastCommittedAt,
       );
       final saved = await store.save(
         next,
@@ -321,6 +508,9 @@ class DatasetController extends ChangeNotifier {
   }
 
   Future<void> _saveDrafts(List<LocalDraft> drafts) async {
+    if (snapshot?.pendingCommit != null) {
+      throw const DatasetStorageFailure('commit-pending');
+    }
     final previous = snapshot;
     final store = _store;
     final epoch = _epoch;
@@ -381,6 +571,7 @@ class DatasetController extends ChangeNotifier {
         stored['id']! as String,
         name: name,
         topicId: stored['topicId']! as String,
+        expectedRevision: record['revision']! as int,
       );
     }
     if (record['resourceType'] == 'card') {
@@ -390,6 +581,7 @@ class DatasetController extends ChangeNotifier {
       if (stored == null) throw const DatasetStorageFailure('storage-closed');
       return updateCard(
         stored['id']! as String,
+        expectedRevision: record['revision']! as int,
         name: name,
         difficulty:
             _workingSnapshot().drafts
@@ -531,7 +723,11 @@ class DatasetController extends ChangeNotifier {
     ]);
   }
 
-  Future<void> renameTopic(String id, String name) async {
+  Future<void> renameTopic(
+    String id,
+    String name, {
+    int? expectedRevision,
+  }) async {
     final current = _workingSnapshot(owner: true);
     final existing = current.drafts
         .where((d) => d.resourceType == 'topic' && d.resourceId == id)
@@ -545,6 +741,10 @@ class DatasetController extends ChangeNotifier {
     final record = current.records
         .where((r) => r['resourceType'] == 'topic' && r['id'] == id)
         .firstOrNull;
+    if (expectedRevision != null &&
+        (record?['revision'] ?? 0) != expectedRevision) {
+      throw const DatasetStorageFailure('draft-conflict');
+    }
     if (record == null && existing?.action != 'create' ||
         record != null && !{'active', 'hidden'}.contains(record['state'])) {
       throw const DatasetStorageFailure('invalid-topic-state');
@@ -568,9 +768,12 @@ class DatasetController extends ChangeNotifier {
     ]);
   }
 
-  Future<void> hideTopic(String id) => _topicAction(id, 'hide');
-  Future<void> deleteTopic(String id) => _topicAction(id, 'softDelete');
-  Future<void> restoreTopic(String id) => _topicAction(id, 'restore');
+  Future<void> hideTopic(String id, {int? expectedRevision}) =>
+      _topicAction(id, 'hide', expectedRevision: expectedRevision);
+  Future<void> deleteTopic(String id, {int? expectedRevision}) =>
+      _topicAction(id, 'softDelete', expectedRevision: expectedRevision);
+  Future<void> restoreTopic(String id, {int? expectedRevision}) =>
+      _topicAction(id, 'restore', expectedRevision: expectedRevision);
 
   bool _hasPendingChildren(DatasetSnapshot current, String topicId) {
     final packs = current.records
@@ -591,7 +794,11 @@ class DatasetController extends ChangeNotifier {
     );
   }
 
-  Future<void> _topicAction(String id, String action) async {
+  Future<void> _topicAction(
+    String id,
+    String action, {
+    int? expectedRevision,
+  }) async {
     final current = _workingSnapshot(owner: true);
     if (current.drafts.any(
       (d) => d.resourceType == 'topic' && d.resourceId == id,
@@ -601,6 +808,9 @@ class DatasetController extends ChangeNotifier {
     final record = current.records
         .where((r) => r['resourceType'] == 'topic' && r['id'] == id)
         .firstOrNull;
+    if (expectedRevision != null && record?['revision'] != expectedRevision) {
+      throw const DatasetStorageFailure('draft-conflict');
+    }
     if (record == null ||
         (action == 'hide'
             ? record['state'] != 'active'
@@ -1270,7 +1480,10 @@ class DatasetController extends ChangeNotifier {
   }
 
   /// Explicit image-only upload. Card mutation remains a separate queued intent.
-  Future<void> uploadCardImage(String draftId) async {
+  Future<void> uploadCardImage(String draftId) =>
+      _exclusive(() => _uploadCardImage(draftId));
+
+  Future<void> _uploadCardImage(String draftId) async {
     if (!canUploadImages || uploadingImageDraftId != null) {
       throw const DatasetStorageFailure('image-upload-unavailable');
     }
@@ -1349,6 +1562,22 @@ class DatasetController extends ChangeNotifier {
   /// Every review/action rechecks the live account. Pending browser edits cannot
   /// be mistaken for the committed revision being approved or distributed.
   Future<PublicationReview> reviewPublication(
+    String resourceType,
+    String id, {
+    String? action,
+    PublicationReview? expected,
+    String? evidence,
+  }) => _exclusive(
+    () => _reviewPublication(
+      resourceType,
+      id,
+      action: action,
+      expected: expected,
+      evidence: evidence,
+    ),
+  );
+
+  Future<PublicationReview> _reviewPublication(
     String resourceType,
     String id, {
     String? action,
@@ -1470,6 +1699,20 @@ class DatasetController extends ChangeNotifier {
   }
 
   Future<BulkImportResult> importAndCommitBulkCards({
+    required String packId,
+    required List<BulkImportItem> items,
+    void Function(BulkImportProgress)? onProgress,
+    Future<void>? cancelled,
+  }) => _exclusive(
+    () => _importAndCommitBulkCards(
+      packId: packId,
+      items: items,
+      onProgress: onProgress,
+      cancelled: cancelled,
+    ),
+  );
+
+  Future<BulkImportResult> _importAndCommitBulkCards({
     required String packId,
     required List<BulkImportItem> items,
     void Function(BulkImportProgress)? onProgress,
@@ -1621,8 +1864,10 @@ class DatasetController extends ChangeNotifier {
               'difficulty': item.difficulty,
               'state': 'active',
               'revision': currentRevision,
-              'createdByUid': result.actorId,
-              'createdAt': result.committedAt,
+              if (target.role == 'owner_admin') ...{
+                'createdByUid': result.actorId,
+                'createdAt': result.committedAt,
+              },
             }),
           );
         }
@@ -1646,6 +1891,9 @@ class DatasetController extends ChangeNotifier {
           updatedSnapshot,
           expectedVersion: latest.version,
         );
+        if (!_current(epoch)) {
+          throw const DatasetApiFailure('cancelled');
+        }
         snapshot = saved ?? updatedSnapshot;
         _notify();
       } catch (error) {

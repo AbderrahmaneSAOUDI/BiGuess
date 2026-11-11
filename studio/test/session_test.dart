@@ -345,7 +345,7 @@ void main() {
     expect(session.principal, isNull);
   });
 
-  testWidgets('periodic check forces refresh and detects role revocation', (
+  testWidgets('no periodic requests; explicit validation detects revocation', (
     tester,
   ) async {
     session.dispose();
@@ -360,6 +360,9 @@ void main() {
         throw const SessionFailure('forbidden');
     await tester.pump(const Duration(seconds: 2));
     await tester.pump();
+    expect(identity.refreshes, 0);
+    expect(session.phase, SessionPhase.authorized);
+    await session.validate(refresh: true);
     expect(identity.refreshes, 1);
     expect(session.phase, SessionPhase.denied);
     expect(session.principal, isNull);

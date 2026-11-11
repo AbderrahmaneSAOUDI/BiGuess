@@ -20,10 +20,20 @@ class _Controller extends ChangeNotifier implements DatasetController {
   String? errorCode;
   bool failSave = false;
   int saves = 0;
+  int commits = 0;
+  int refreshes = 0;
+  @override
+  Future<void> commit() async {
+    commits++;
+  }
+
   @override
   bool get busy => false;
   @override
-  Future<void> refresh() async {}
+  Future<void> refresh() async {
+    refreshes++;
+  }
+
   @override
   Future<void> retryStorage() async {}
   @override
@@ -125,6 +135,32 @@ void main() {
       ),
     );
   }
+
+  testWidgets('Commit and Refresh send only explicit user actions', (
+    tester,
+  ) async {
+    controller.snapshot = controller.snapshot!.copyWith(
+      drafts: [
+        LocalDraft(
+          id: 'queued',
+          resourceType: 'pack',
+          resourceId: 'pack-a',
+          baseRevision: 1,
+          value: {'name': 'Edited', 'topicId': 'topic'},
+          status: DraftStatus.unsent,
+        ),
+      ],
+    );
+    await show(tester);
+    expect(controller.commits, 0);
+    expect(controller.refreshes, 0);
+    await tester.tap(find.text('Commit queued changes'));
+    await tester.pump();
+    expect(controller.commits, 1);
+    await tester.tap(find.text('Refresh dataset'));
+    await tester.pump();
+    expect(controller.refreshes, 1);
+  });
 
   testWidgets('offline local editor retains unsaved text on quota failure', (
     tester,

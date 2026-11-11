@@ -166,6 +166,8 @@ class DatasetSnapshot {
     this.resumeCursor,
     this.lastSyncedAt,
     this.version = 0,
+    this.pendingCommit,
+    this.lastCommittedAt,
   }) : records = List.unmodifiable(
          records.map((record) => Map<String, Object?>.unmodifiable(record)),
        ),
@@ -176,6 +178,8 @@ class DatasetSnapshot {
   final String? resumeCursor;
   final DateTime? lastSyncedAt;
   final int version;
+  final Map<String, Object?>? pendingCommit;
+  final DateTime? lastCommittedAt;
 
   DatasetSnapshot copyWith({
     List<Map<String, Object?>>? records,
@@ -183,6 +187,9 @@ class DatasetSnapshot {
     String? resumeCursor,
     DateTime? lastSyncedAt,
     int? version,
+    Map<String, Object?>? pendingCommit,
+    bool clearPendingCommit = false,
+    DateTime? lastCommittedAt,
   }) => DatasetSnapshot(
     scope: scope,
     records: records ?? this.records,
@@ -190,6 +197,10 @@ class DatasetSnapshot {
     resumeCursor: resumeCursor ?? this.resumeCursor,
     lastSyncedAt: lastSyncedAt ?? this.lastSyncedAt,
     version: version ?? this.version,
+    pendingCommit: clearPendingCommit
+        ? null
+        : pendingCommit ?? this.pendingCommit,
+    lastCommittedAt: lastCommittedAt ?? this.lastCommittedAt,
   );
   Map<String, Object?> toJson() => {
     'schemaVersion': 1,
@@ -199,6 +210,9 @@ class DatasetSnapshot {
     'resumeCursor': resumeCursor,
     'lastSyncedAt': lastSyncedAt?.toUtc().toIso8601String(),
     'version': version,
+    if (pendingCommit != null) 'pendingCommit': pendingCommit,
+    if (lastCommittedAt != null)
+      'lastCommittedAt': lastCommittedAt!.toUtc().toIso8601String(),
   };
   factory DatasetSnapshot.fromJson(Map<String, Object?> json) {
     if (!_keys(json, {
@@ -209,6 +223,8 @@ class DatasetSnapshot {
           'resumeCursor',
           'lastSyncedAt',
           'version',
+          'pendingCommit',
+          'lastCommittedAt',
         }) ||
         json['schemaVersion'] != 1 ||
         json['scope'] is! Map ||
@@ -231,6 +247,12 @@ class DatasetSnapshot {
           ? null
           : DateTime.parse(json['lastSyncedAt']! as String),
       version: json['version']! as int,
+      pendingCommit: json['pendingCommit'] == null
+          ? null
+          : _commitIntent(json['pendingCommit']),
+      lastCommittedAt: json['lastCommittedAt'] == null
+          ? null
+          : DateTime.parse(json['lastCommittedAt']! as String),
     );
   }
 }
@@ -245,3 +267,58 @@ Map<String, Object?> _map(Object? value) {
 
 bool _keys(Map<String, Object?> json, Set<String> keys) =>
     json.keys.every(keys.contains);
+
+Map<String, Object?> _commitIntent(Object? value) {
+  final intent = _map(value);
+  if (intent.length != 4 ||
+      !_keys(intent, {'key', 'draftId', 'revision', 'batch'}) ||
+      intent['key'] is! String ||
+      (intent['key'] as String).isEmpty ||
+      intent['draftId'] is! String ||
+      (intent['draftId'] as String).isEmpty ||
+      intent['revision'] is! int ||
+      (intent['revision'] as int) < 0) {
+    throw const FormatException('Invalid pending Commit');
+  }
+  final batch = _map(intent['batch']);
+  final aggregate = _map(batch['aggregate']);
+  if (batch.length != 3 ||
+      !_keys(batch, {'protocolVersion', 'aggregate', 'operations'}) ||
+      batch['protocolVersion'] != 1 ||
+      aggregate.length != 2 ||
+      !_keys(aggregate, {'resourceType', 'id'}) ||
+      !{'topic', 'pack'}.contains(aggregate['resourceType']) ||
+      aggregate['id'] is! String ||
+      batch['operations'] is! List ||
+      (batch['operations'] as List).length != 1) {
+    throw const FormatException('Invalid pending batch');
+  }
+  final op = _map((batch['operations'] as List).single);
+  if (!_keys(op, {'resourceType', 'id', 'action', 'value'}) ||
+      !{'topic', 'pack', 'card'}.contains(op['resourceType']) ||
+      op['id'] is! String ||
+      !{
+        'create',
+        'update',
+        'hide',
+        'softDelete',
+        'restore',
+        'permanentDelete',
+      }.contains(op['action'])) {
+    throw const FormatException('Invalid pending operation');
+  }
+  if ({'create', 'update'}.contains(op['action'])) {
+    final fields = switch (op['resourceType']) {
+      'topic' => {'name'},
+      'pack' => {'name', 'topicId'},
+      _ => {'name', 'packId', 'difficulty', 'imageReference'},
+    };
+    final content = _map(op['value']);
+    if (content.length != fields.length || !_keys(content, fields)) {
+      throw const FormatException('Invalid pending value');
+    }
+  } else if (op.containsKey('value')) {
+    throw const FormatException('Unexpected pending value');
+  }
+  return intent;
+}

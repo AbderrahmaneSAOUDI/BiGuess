@@ -42,6 +42,20 @@ class DatasetPage extends StatelessWidget {
             runSpacing: 12,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
+              FilledButton(
+                onPressed:
+                    controller.busy ||
+                        snapshot == null ||
+                        (snapshot.pendingCommit == null &&
+                            !snapshot.drafts.any(
+                              (d) => d.status == DraftStatus.unsent,
+                            ))
+                    ? null
+                    : controller.commit,
+                child: const Text('Commit queued changes'),
+              ),
+              if (snapshot?.lastCommittedAt != null)
+                Text('Last committed: ${snapshot!.lastCommittedAt!.toLocal()}'),
               FilledButton.tonal(
                 onPressed: controller.busy ? null : controller.refresh,
                 child: const Text('Refresh dataset'),
@@ -54,6 +68,11 @@ class DatasetPage extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 16),
+          if (snapshot?.pendingCommit != null)
+            const Text(
+              'Commit result unconfirmed. Retry Commit to recover the '
+              'same transaction before editing this queue.',
+            ),
           if (controller.busy)
             Semantics(
               liveRegion: true,
@@ -401,6 +420,13 @@ String _errorMessage(String code) => switch (code) {
         'not been replaced. Enable site storage or use a supported browser and retry.',
   'forbidden' || 'session-expired' =>
     'Access is no longer authorized. Sign in again before opening any content.',
+  'draft-conflict' || 'idempotency-conflict' => 'Commit conflict. Your changes are retained for review. Refresh, then discard or recreate the conflicting draft explicitly.',
+  'image-upload-required' =>
+    'Upload the prepared image privately before committing this Card.',
+  'commit-pending' =>
+    'A Commit result is uncertain. Retry Commit before editing this queue.',
+  'sync-busy' =>
+    'Another upload or sync action is running. Wait for it to finish.',
   'cursor_expired' =>
     'The sync snapshot expired. Refresh to restart; the last complete saved '
         'dataset and local drafts remain intact.',

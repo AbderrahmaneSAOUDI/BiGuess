@@ -219,6 +219,271 @@ void main() {
     },
   );
 
+  group('incremental changes', () {
+    test('unchanged refresh requests only the scoped feed', () async {
+      final original = [topic(), pack()];
+      final api = WorkerDatasetApi(
+        Uri.parse('https://api.example'),
+        MockClient((request) async {
+          expect(request.url.path, '/studio/v1/sync/changes');
+          expect(request.url.queryParameters, {
+            'limit': '100',
+            'cursor': 'opaque+resume/1',
+          });
+          expect(request.headers['Authorization'], 'Bearer token');
+          return page([], resume: 'resume-2');
+        }),
+      );
+      addTearDown(api.close);
+      final result = await api.changes(
+        'token',
+        original,
+        'opaque+resume/1',
+        () => true,
+      );
+      expect(result.records, original);
+      expect(result.resumeCursor, 'resume-2');
+    });
+
+    test('stages all pages and applies ordered upserts and removals', () async {
+      final original = [topic(), pack()];
+      var calls = 0;
+      final api = WorkerDatasetApi(
+        Uri.parse('https://api.example'),
+        MockClient((request) async {
+          calls++;
+          if (calls == 1) {
+            return page([
+              {
+                'kind': 'upsert',
+                'record': {...pack(), 'name': 'Updated', 'revision': 2},
+              },
+            ], next: 'second');
+          }
+          expect(request.url.queryParameters['cursor'], 'second');
+          return page([
+            {
+              'kind': 'remove',
+              'resourceType': 'pack',
+              'id': 'pack',
+              'revision': 3,
+            },
+            {
+              'kind': 'upsert',
+              'record': {...topic(), 'name': 'Renamed', 'revision': 2},
+            },
+          ], resume: 'complete');
+        }),
+      );
+      addTearDown(api.close);
+      final result = await api.changes('token', original, 'start', () => true);
+      expect(result.records.single['name'], 'Renamed');
+      expect(result.resumeCursor, 'complete');
+      expect(original[1]['name'], 'pack');
+      expect(calls, 2);
+    });
+
+    test(
+      'Owner removals rebuild lifecycle rows from a complete scan',
+      () async {
+        var calls = 0;
+        final deleted = {
+          ...pack(),
+          'state': 'deleted',
+          'revision': 2,
+          'createdByUid': 'collector',
+          'createdAt': '2026-11-11T00:00:00Z',
+        };
+        final api = WorkerDatasetApi(
+          Uri.parse('https://api.example'),
+          MockClient((request) async {
+            calls++;
+            if (calls == 1) {
+              expect(request.url.path, '/studio/v1/sync/changes');
+              return page([
+                {
+                  'kind': 'remove',
+                  'resourceType': 'pack',
+                  'id': 'pack',
+                  'revision': 2,
+                },
+              ], resume: 'feed-complete');
+            }
+            expect(request.url.path, '/studio/v1/sync/initial');
+            return page([topic(), deleted], resume: 'full-complete');
+          }),
+        );
+        addTearDown(api.close);
+        final result = await api.changes(
+          'token',
+          [topic(), pack()],
+          'start',
+          () => true,
+          owner: true,
+        );
+        expect(result.records.last, deleted);
+        expect(result.resumeCursor, 'full-complete');
+        expect(calls, 2);
+      },
+    );
+
+    test(
+      'older feed events cannot replace acknowledged newer records',
+      () async {
+        final newer = {...pack(), 'name': 'Committed', 'revision': 3};
+        final api = WorkerDatasetApi(
+          Uri.parse('https://api.example'),
+          MockClient(
+            (_) async => page([
+              {'kind': 'upsert', 'record': pack()},
+              {
+                'kind': 'remove',
+                'resourceType': 'pack',
+                'id': 'pack',
+                'revision': 2,
+              },
+            ], resume: 'complete'),
+          ),
+        );
+        addTearDown(api.close);
+        final result = await api.changes(
+          'token',
+          [topic(), newer],
+          'start',
+          () => true,
+        );
+        expect(result.records.last['name'], 'Committed');
+      },
+    );
+
+    test(
+      'expired feed discards staging and falls back to bounded initial scan',
+      () async {
+        var calls = 0;
+        final api = WorkerDatasetApi(
+          Uri.parse('https://api.example'),
+          MockClient((request) async {
+            calls++;
+            if (calls == 1) {
+              return page([
+                {'kind': 'upsert', 'record': topic('discarded')},
+              ], next: 'expired');
+            }
+            if (calls == 2) return http.Response('{}', 409);
+            expect(request.url.path, '/studio/v1/sync/initial');
+            return page([topic()], resume: 'fresh');
+          }),
+        );
+        addTearDown(api.close);
+        final result = await api.changes(
+          'token',
+          [topic('old')],
+          'start',
+          () => true,
+        );
+        expect(result.records.single['id'], 'topic');
+        expect(calls, 3);
+      },
+    );
+
+    for (final (status, code) in [
+      (401, 'session-expired'),
+      (403, 'forbidden'),
+      (503, 'sync-unavailable'),
+    ]) {
+      test(
+        'failed later page ($status) leaves the original dataset intact',
+        () async {
+          final original = [topic()];
+          var calls = 0;
+          final api = WorkerDatasetApi(
+            Uri.parse('https://api.example'),
+            MockClient((_) async {
+              calls++;
+              return calls == 1
+                  ? page([
+                      {'kind': 'upsert', 'record': pack()},
+                    ], next: 'second')
+                  : http.Response('{}', status);
+            }),
+          );
+          addTearDown(api.close);
+          await expectLater(
+            api.changes('token', original, 'start', () => true),
+            throwsA(apiFailure(code)),
+          );
+          expect(original, [topic()]);
+          expect(calls, 2);
+        },
+      );
+    }
+
+    test('cancellation prevents requests and rejects late responses', () async {
+      var current = false;
+      var calls = 0;
+      final api = WorkerDatasetApi(
+        Uri.parse('https://api.example'),
+        MockClient((_) async {
+          calls++;
+          current = false;
+          return page([], resume: 'complete');
+        }),
+      );
+      addTearDown(api.close);
+      await expectLater(
+        api.changes('token', [topic()], 'start', () => current),
+        throwsA(apiFailure('cancelled')),
+      );
+      expect(calls, 0);
+      current = true;
+      await expectLater(
+        api.changes('token', [topic()], 'start', () => current),
+        throwsA(apiFailure('cancelled')),
+      );
+      expect(calls, 1);
+    });
+
+    final malformedEvents = {
+      'privileged removal fields': page([
+        {
+          'kind': 'remove',
+          'resourceType': 'pack',
+          'id': 'pack',
+          'revision': 2,
+          'name': 'private',
+        },
+      ], resume: 'complete'),
+      'unknown event kind': page([
+        {'kind': 'unexpected'},
+      ], resume: 'complete'),
+      'invalid upsert': page([
+        {
+          'kind': 'upsert',
+          'record': {'id': 'bad'},
+        },
+      ], resume: 'complete'),
+      'orphan result': page([
+        {'kind': 'upsert', 'record': pack()},
+      ], resume: 'complete'),
+      'missing watermark': page([]),
+      'premature watermark': page([], next: 'next', resume: 'early'),
+      'repeated cursor': page([], next: 'start'),
+    };
+    for (final entry in malformedEvents.entries) {
+      test('rejects ${entry.key} without promoting staging', () async {
+        final api = WorkerDatasetApi(
+          Uri.parse('https://api.example'),
+          MockClient((_) async => entry.value),
+        );
+        addTearDown(api.close);
+        await expectLater(
+          api.changes('token', [], 'start', () => true),
+          throwsA(apiFailure('invalid-dataset')),
+        );
+      });
+    }
+  });
+
   group('WorkerDatasetApi.commitBatch', () {
     test(
       'sends POST /studio/v1/batches with valid headers and parses result',
@@ -269,6 +534,34 @@ void main() {
         expect(captured!.headers['Content-Type'], 'application/json');
       },
     );
+
+    test('new aggregate uses create-only precondition', () async {
+      final api = WorkerDatasetApi(
+        Uri.parse('https://api.example'),
+        MockClient((request) async {
+          expect(request.headers['If-None-Match'], '*');
+          expect(request.headers.containsKey('If-Match'), false);
+          return http.Response(
+            jsonEncode({
+              'protocolVersion': 1,
+              'revision': 1,
+              'committedAt': '2026-11-11T00:00:00Z',
+              'actorId': 'user-1',
+            }),
+            200,
+          );
+        }),
+      );
+      addTearDown(api.close);
+      final result = await api.commitBatch(
+        'token',
+        idempotencyKey: 'new-key',
+        revision: 0,
+        batch: const {},
+        current: () => true,
+      );
+      expect(result.revision, 1);
+    });
 
     test('maps status codes to DatasetApiFailure', () async {
       for (final (status, code) in [

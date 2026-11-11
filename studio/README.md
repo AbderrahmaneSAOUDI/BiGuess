@@ -399,3 +399,20 @@ The API remains independently configured; no production Content Backend
 deployment, remote migration, API activation or bucket operation is performed by
 this ticket. See the [versioned contract](../contracts/studio/v1/image-ingestion.md)
 and [T32A verification](T32A-VERIFICATION.md).
+
+
+## Explicit Commit and Refresh (T36)
+
+Save locally, then Queue commit, then choose **Commit queued changes** while
+online. Prepared images use **Upload image privately** before their metadata
+Commit. Commit does not publish. Each queued operation is acknowledged separately;
+a later failure retains the remaining queue. An uncertain result retains its
+original persisted idempotency key and revision; retry Commit before editing.
+
+**Refresh dataset** checks current access and stages the scoped incremental feed.
+Unchanged refreshes do not download the dataset. A complete authorized rebuild is
+used for expired cursors and Owner lifecycle removals. Conflicts retain local
+content; refresh and explicitly discard/recreate the conflicting draft. Another
+tab's edits cannot silently replace the queue being committed. Cached content
+never polls; timestamps distinguish complete sync from acknowledged Commit.
+See [T36 verification](T36-VERIFICATION.md) for boundaries and reproduction.
