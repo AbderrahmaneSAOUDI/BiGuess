@@ -26,8 +26,8 @@ async function token(uid = 'collector', overrides = {}, key = keys.privateKey, h
 async function setup(t, bindings = {}, keyResponse = () => Response.json({ keys: [jwk] })) {
   const mf = new Miniflare(convertV4MiniflareOptions({ modules: workerModules(`${root}dist/index.js`),
     scriptPath: `${root}dist/index.js`, compatibilityDate: '2026-11-01',
-    bindings: { APP_ENV: 'staging', FIREBASE_PROJECT_ID: project,
-      STUDIO_USERS: JSON.stringify(users), ...bindings },
+    bindings: Object.fromEntries(Object.entries({ APP_ENV: 'staging', FIREBASE_PROJECT_ID: project,
+      STUDIO_USERS: JSON.stringify(users), ...bindings }).filter(([, value]) => value !== undefined)),
     outboundService: request => {
       assert.equal(request.url, 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com');
       assert.equal(request.method, 'GET');
@@ -105,6 +105,30 @@ test('only server allowlist grants roles; claims, headers, body and reused email
   assert.deepEqual(await expect(await request(undefined, await token('owner', { email: 'OWNER@EXAMPLE.TEST' })), 200), users[0]);
   await expect(await request('/studio/v1/users/collector', forged, 'PATCH', { role: 'owner_admin' },
     { 'X-Role': 'owner_admin', 'X-User-Id': 'owner' }), 403, 'forbidden');
+});
+
+test('default super admin requires the pinned UID, verified Google email and BiGuess project', async t => {
+  const email = 'abderrahmane.saoudi.26@gmail.com';
+  const claims = { email, aud: 'biguess-firebase', iss: 'https://securetoken.google.com/biguess-firebase' };
+  const bindings = { FIREBASE_PROJECT_ID: 'biguess-firebase', STUDIO_USERS: '[]', STUDIO_SUPER_ADMIN_UID: 'default-owner' };
+  const request = await setup(t, bindings);
+  for (const path of ['/studio/v1/session', '/content/v1/studio/session']) {
+    assert.deepEqual(await expect(await request(path, await token('default-owner', { ...claims, email: email.toUpperCase() })), 200),
+      { uid: 'default-owner', email, role: 'owner_admin' });
+  }
+  await expect(await request(undefined, await token('different-uid', claims)), 403, 'forbidden');
+  await expect(await request(undefined, await token('default-owner', { ...claims, email: 'other@example.test' })), 403, 'forbidden');
+  await expect(await request(undefined, await token('default-owner', { ...claims, email_verified: false })), 401, 'unauthenticated');
+  await expect(await request(undefined, await token('default-owner', { ...claims, firebase: { sign_in_provider: 'password' } })), 401, 'unauthenticated');
+  await expect(await request(undefined, await token('default-owner', claims, attacker.privateKey)), 401, 'unauthenticated');
+  const disabled = await setup(t, { ...bindings, STUDIO_SUPER_ADMIN_UID: '' });
+  await expect(await disabled(undefined, await token('default-owner', claims)), 403, 'forbidden');
+  const otherProject = await setup(t, { STUDIO_USERS: '[]', STUDIO_SUPER_ADMIN_UID: 'default-owner' });
+  await expect(await otherProject(undefined, await token('default-owner', { email })), 403, 'forbidden');
+  const malformed = await setup(t, { ...bindings, STUDIO_USERS: '{' });
+  await expect(await malformed(undefined, await token('default-owner', claims)), 503, 'auth_unavailable');
+  const ownerOnly = await setup(t, { ...bindings, STUDIO_USERS: undefined });
+  assert.equal((await expect(await ownerOnly(undefined, await token('default-owner', claims)), 200)).role, 'owner_admin');
 });
 
 test('Collector may read content and create/edit/hide Packs and Cards; Owner-only operations are forbidden', async t => {

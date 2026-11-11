@@ -198,6 +198,14 @@ Configure these **server-side** bindings for each environment:
 - `STUDIO_USERS`: a Worker secret containing JSON entries with `uid`, `email`, and
   `role` (`owner_admin` or `collector`). Both Firebase UID and verified email must
   match exactly one entry (email comparison is case-insensitive).
+- `STUDIO_SUPER_ADMIN_UID`: optional server-pinned Firebase UID for the default
+  super admin, `abderrahmane.saoudi.26@gmail.com`. Requires
+  `FIREBASE_PROJECT_ID=biguess-firebase`, a verified Google token, and both the
+  matching UID and email. Grants the existing `owner_admin` role, including
+  dashboard access. Leave unset to disable this default account; other accounts
+  continue to require `STUDIO_USERS`. Malformed allowlist configuration still
+  fails closed. To revoke this owner, unset this binding and remove any matching
+  allowlist entry. No frontend email check grants access.
 - `STUDIO_ALLOWED_ORIGINS`: a JSON array of exact browser origins, for example
   `["https://studio.saoudi.online"]` for an independently approved environment,
   or `["http://localhost:7357","http://127.0.0.1:7357"]` for local development.
@@ -208,7 +216,8 @@ For local development use ignored `.dev.vars.local`; for staging use
 `npx wrangler secret put STUDIO_USERS --env staging` and configure the project ID
 in the environment. Never put real allowlists, credentials or bearer tokens in
 source control, Flutter defines, frontend bundles or logs. An empty allowlist
-admits nobody. Missing/invalid configuration or key-service failure fails closed.
+admits nobody unless the default owner UID is configured. Missing/invalid
+configuration or key-service failure fails closed.
 Removing an allowlist entry revokes Studio access on subsequent requests; roles
 are read from this server data every time. Token claims, headers, query parameters
 and request bodies cannot grant roles. Moderator/community roles are unsupported.

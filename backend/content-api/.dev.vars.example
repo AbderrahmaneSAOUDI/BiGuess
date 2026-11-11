@@ -4,3 +4,7 @@
 # Optional Studio boundary; empty allowlist denies all users.
 FIREBASE_PROJECT_ID=your-firebase-project-id
 STUDIO_USERS=[]
+# Optional default super admin: verified Google email abderrahmane.saoudi.26@gmail.com.
+# Set FIREBASE_PROJECT_ID=biguess-firebase and pin that account's Firebase UID.
+# Blank keeps the default owner disabled. Never use an email as the UID.
+STUDIO_SUPER_ADMIN_UID=

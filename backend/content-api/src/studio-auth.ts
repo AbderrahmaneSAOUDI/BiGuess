@@ -12,12 +12,14 @@ export class StudioError extends Error {
 export type Role = 'owner_admin' | 'collector';
 export interface Principal { uid: string; email: string; role: Role }
 
+const defaultSuperAdminEmail = 'abderrahmane.saoudi.26@gmail.com';
+
 export async function authenticate(request: Request, env: Env): Promise<Principal> {
   const authorization = request.headers.get('Authorization');
   if (!authorization || !/^Bearer [^\s]+$/i.test(authorization)) {
     throw new StudioError(401, 'unauthenticated');
   }
-  if (!env.FIREBASE_PROJECT_ID || !env.STUDIO_USERS) {
+  if (!env.FIREBASE_PROJECT_ID || (!env.STUDIO_USERS && !env.STUDIO_SUPER_ADMIN_UID)) {
     throw new StudioError(503, 'auth_unavailable');
   }
   let payload;
@@ -53,7 +55,7 @@ export async function authenticate(request: Request, env: Env): Promise<Principa
   // Only server-managed data grants roles; custom claims/headers/body are ignored.
   // UID binding also prevents a different Firebase account reusing an email.
   let users: unknown;
-  try { users = JSON.parse(env.STUDIO_USERS); } catch {
+  try { users = JSON.parse(env.STUDIO_USERS ?? '[]'); } catch {
     throw new StudioError(503, 'auth_unavailable');
   }
   if (!Array.isArray(users) || !users.every(user => user
@@ -62,6 +64,12 @@ export async function authenticate(request: Request, env: Env): Promise<Principa
     throw new StudioError(503, 'auth_unavailable');
   }
   const email = payload.email.toLowerCase();
+  // The default owner still requires a server-pinned UID and verified Google
+  // identity in the selected project. An email or client claim alone grants nothing.
+  if (env.FIREBASE_PROJECT_ID === 'biguess-firebase'
+    && env.STUDIO_SUPER_ADMIN_UID === payload.sub && email === defaultSuperAdminEmail) {
+    return { uid: payload.sub, email, role: 'owner_admin' };
+  }
   const matches = users.filter(user => user.uid === payload.sub && user.email.toLowerCase() === email);
   if (matches.length !== 1) throw new StudioError(403, 'forbidden');
   return { uid: payload.sub, email, role: matches[0].role };
