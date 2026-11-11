@@ -491,6 +491,270 @@ void main() {
   );
 
   test(
+    'cancel after staged writes but before pointer activation preserves old generation',
+    () async {
+      final previous = await store.install(source);
+      final update = copy();
+      pack(update)['revision'] = 2;
+      final io = FailingStorage();
+      await expectLater(
+        LocalPackStore(root, io: io).install(
+          await writePack(update),
+          checkCancelled: () {
+            if (io.writes >= 3) throw StateError('cancelled');
+          },
+        ),
+        throwsStateError,
+      );
+      await expectPreviousIntact(previous);
+      expect(
+        await previous.directory.parent
+            .list()
+            .where(
+              (e) =>
+                  p.basename(e.path).startsWith('staging-') ||
+                  p.basename(e.path) == 'active.pending',
+            )
+            .toList(),
+        isEmpty,
+      );
+      expect(
+        await previous.directory.parent
+            .list()
+            .where((entry) => entry is Directory)
+            .toList(),
+        hasLength(1),
+      );
+    },
+  );
+
+  test(
+    'atomic activation wins cancellation once the commit has started',
+    () async {
+      final previous = await store.install(source);
+      final update = copy();
+      pack(update)['revision'] = 2;
+      var cancelled = false;
+      final io = FailingStorage()
+        ..beforeActivation = (() async {
+          cancelled = true;
+        });
+      final installed = await LocalPackStore(root, io: io).install(
+        await writePack(update),
+        checkCancelled: () {
+          if (cancelled) throw StateError('cancelled');
+        },
+      );
+      expect(installed.manifest.pack.revision, 2);
+      expect(
+        (await store.readInstalled('fixture-pack'))!.directory.path,
+        installed.directory.path,
+      );
+      expect(await previous.directory.exists(), isTrue);
+      for (final card in previous.cards) {
+        expect(
+          await PrivatePackImages.read(
+            root,
+            PrivateImageReference.parse(card.imageReference),
+          ),
+          isNotEmpty,
+        );
+      }
+    },
+  );
+
+  test(
+    'recovery is bounded and skips live leases and retained generations',
+    () async {
+      final previous = await store.install(source);
+      final live = await store.createDownloadStaging();
+      for (var i = 0; i < 5; i++) {
+        final orphan = await Directory(
+          p.join(root.path, 'download-orphan$i'),
+        ).create();
+        await File(
+          p.join(orphan.path, 'archive.biguesspack'),
+        ).writeAsBytes([1, 2]);
+      }
+      final pending = File(
+        p.join(previous.directory.parent.path, 'active.pending'),
+      );
+      await pending.writeAsString('generation-incomplete');
+      expect(await store.recoverInterruptedDownloads(maxEntries: 2), 2);
+      expect(await live.directory.exists(), isTrue);
+      expect(await previous.directory.exists(), isTrue);
+      var recovered = 2;
+      for (var i = 0; i < 4; i++) {
+        recovered += await store.recoverInterruptedDownloads(maxEntries: 2);
+      }
+      expect(recovered, 6);
+      expect(await live.directory.exists(), isTrue);
+      await live.release();
+      await expectPreviousIntact(previous);
+      expect(
+        await root
+            .list()
+            .where((e) => p.basename(e.path).startsWith('download-'))
+            .toList(),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'killed process lease is recovered on restart while a live process is protected',
+    () async {
+      final previous = await store.install(source);
+      final process = await Process.start('python3', [
+        '-u',
+        '-c',
+        r"""
+import fcntl, os, sys, time
+path = os.path.join(sys.argv[1], 'download-killedProcess')
+os.mkdir(path)
+lease = open(os.path.join(path, '.lease'), 'a+b')
+fcntl.lockf(lease, fcntl.LOCK_EX)
+with open(os.path.join(path, 'archive.biguesspack'), 'wb') as target:
+    target.write(b'partial interrupted bytes')
+print('ready', flush=True)
+time.sleep(3600)
+""",
+        root.path,
+      ]);
+      try {
+        expect(
+          await process.stdout
+              .transform(utf8.decoder)
+              .transform(const LineSplitter())
+              .first
+              .timeout(const Duration(seconds: 5)),
+          'ready',
+        );
+        expect(await store.recoverInterruptedDownloads(), 0);
+        expect(
+          await Directory(p.join(root.path, 'download-killedProcess')).exists(),
+          isTrue,
+        );
+        await expectPreviousIntact(previous);
+        process.kill(ProcessSignal.sigkill);
+        await process.exitCode;
+        final restarted = LocalPackStore(root);
+        expect(await restarted.recoverInterruptedDownloads(), 1);
+        expect(
+          await Directory(p.join(root.path, 'download-killedProcess')).exists(),
+          isFalse,
+        );
+        await expectPreviousIntact(previous);
+      } finally {
+        process.kill(ProcessSignal.sigkill);
+        await process.exitCode;
+      }
+    },
+    skip: !Platform.isLinux,
+  );
+
+  test(
+    'kill before activation reclaims only pending generation with bounded cleanup',
+    () async {
+      final previous = await store.install(source);
+      final packDirectory = previous.directory.parent;
+      final process = await Process.start('python3', [
+        '-u',
+        '-c',
+        r"""
+import fcntl, os, shutil, sys, time
+root, pack, prior = sys.argv[1:]
+lock = open(os.path.join(root, '.install.lock'), 'a+b')
+fcntl.lockf(lock, fcntl.LOCK_EX)
+with open(os.path.join(pack, 'active.pending'), 'wb') as target:
+    target.write(b'generation-killedBeforeCommit')
+    target.flush()
+    os.fsync(target.fileno())
+shutil.copytree(prior, os.path.join(pack, 'generation-killedBeforeCommit'))
+print('ready', flush=True)
+time.sleep(3600)
+""",
+        root.path,
+        packDirectory.path,
+        previous.directory.path,
+      ]);
+      try {
+        expect(
+          await process.stdout
+              .transform(utf8.decoder)
+              .transform(const LineSplitter())
+              .first
+              .timeout(const Duration(seconds: 5)),
+          'ready',
+        );
+        await expectPreviousIntact(previous);
+        process.kill(ProcessSignal.sigkill);
+        await process.exitCode;
+        final restarted = LocalPackStore(root);
+        expect(await restarted.recoverInterruptedDownloads(maxEntries: 1), 1);
+        expect(
+          await Directory(
+            p.join(packDirectory.path, 'generation-killedBeforeCommit'),
+          ).exists(),
+          isFalse,
+        );
+        expect(
+          await File(p.join(packDirectory.path, 'active.pending')).exists(),
+          isTrue,
+        );
+        expect(await restarted.recoverInterruptedDownloads(maxEntries: 1), 1);
+        expect(
+          await File(p.join(packDirectory.path, 'active.pending')).exists(),
+          isFalse,
+        );
+        await expectPreviousIntact(previous);
+      } finally {
+        process.kill(ProcessSignal.sigkill);
+        await process.exitCode;
+      }
+    },
+    skip: !Platform.isLinux,
+  );
+
+  test(
+    'pending pointer to current active generation never deletes installed bytes',
+    () async {
+      final previous = await store.install(source);
+      await File(
+        p.join(previous.directory.parent.path, 'active.pending'),
+      ).writeAsString(p.basename(previous.directory.path));
+      expect(await store.recoverInterruptedDownloads(maxEntries: 1), 1);
+      await expectPreviousIntact(previous);
+    },
+  );
+
+  test(
+    'malformed pending pointer is removed but uncertain active identity preserves generation evidence',
+    () async {
+      final previous = await store.install(source);
+      final parent = previous.directory.parent;
+      final pending = File(p.join(parent.path, 'active.pending'));
+      await pending.writeAsBytes([0xff]);
+      expect(await store.recoverInterruptedDownloads(), 1);
+      await expectPreviousIntact(previous);
+      final orphan = await Directory(
+        p.join(parent.path, 'generation-uncertain'),
+      ).create();
+      await File(p.join(orphan.path, 'partial')).writeAsBytes([1]);
+      await pending.writeAsString('generation-uncertain');
+      final active = File(p.join(parent.path, 'active'));
+      final original = await active.readAsBytes();
+      await active.writeAsBytes([0xff]);
+      expect(await store.recoverInterruptedDownloads(), 0);
+      expect(await orphan.exists(), isTrue);
+      expect(await pending.exists(), isTrue);
+      await active.writeAsBytes(original);
+      expect(await store.recoverInterruptedDownloads(maxEntries: 2), 2);
+      await expectPreviousIntact(previous);
+    },
+  );
+
+  test(
     'same revision conflicts, downgrades and reparenting are rejected',
     () async {
       final first = await store.install(source);

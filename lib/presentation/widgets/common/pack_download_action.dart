@@ -16,20 +16,29 @@ class PackDownloadAction extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final downloads = ref.watch(packDownloadsProvider);
+    final state = downloads[summary.id] ?? const PackDownloadState();
     return TextButton.icon(
       key: ValueKey('download-${summary.id}'),
-      onPressed: downloads.values.any((s) => s.busy)
-          ? null
-          : () {
-              showModalBottomSheet<void>(
-                context: context,
-                isScrollControlled: true,
-                builder: (_) => _DownloadSheet(summary: summary),
-              );
-              ref.read(packDownloadsProvider.notifier).download(summary);
-            },
+      onPressed: () {
+        showModalBottomSheet<void>(
+          context: context,
+          isScrollControlled: true,
+          builder: (_) => _DownloadSheet(summary: summary),
+        );
+        if (!state.busy) {
+          ref.read(packDownloadsProvider.notifier).download(summary);
+        }
+      },
       icon: const Icon(Icons.download_rounded, size: 18),
-      label: Text(update ? 'Download update' : 'Download'),
+      label: Text(
+        state.queued
+            ? 'Queued'
+            : state.busy
+            ? 'Progress'
+            : update
+            ? 'Download update'
+            : 'Download',
+      ),
     );
   }
 }
@@ -62,12 +71,27 @@ class _DownloadSheet extends ConsumerWidget {
               ),
               const SizedBox(height: 12),
               Text(
-                progress == null
+                state.queued
+                    ? 'Queued. One download runs at a time.'
+                    : state.cancelling
+                    ? 'Cancellation requested…'
+                    : progress == null
                     ? 'Preparing download…'
                     : '${progress.phase.name}: ${progress.receivedBytes} / $total bytes',
               ),
               const Text(
                 'You can close this sheet. The download continues while the app stays open.',
+              ),
+              TextButton.icon(
+                onPressed: state.cancelling
+                    ? null
+                    : () => ref
+                          .read(packDownloadsProvider.notifier)
+                          .cancel(summary.id),
+                icon: const Icon(Icons.cancel_outlined),
+                label: Text(
+                  state.queued ? 'Cancel queued download' : 'Cancel download',
+                ),
               ),
             ],
             if (state.installed)
@@ -76,8 +100,7 @@ class _DownloadSheet extends ConsumerWidget {
               Semantics(liveRegion: true, child: Text(_error(state.error!))),
               const SizedBox(height: 12),
               FilledButton.icon(
-                onPressed:
-                    ref.watch(packDownloadsProvider).values.any((s) => s.busy)
+                onPressed: state.busy
                     ? null
                     : () => ref
                           .read(packDownloadsProvider.notifier)
@@ -97,6 +120,10 @@ class _DownloadSheet extends ConsumerWidget {
   }
 
   String _error(String code) => switch (code) {
+    'cancelled' =>
+      'Download cancelled. Existing installed Packs remain available. Retry starts a fresh download.',
+    'queue-full' =>
+      'The download queue is full. Wait for a download to finish or cancel a queued download, then retry.',
     'no-space' => 'Not enough private storage. Free some space and retry.',
     'untrusted-key' || 'untrusted' =>
       'The publisher key is not trusted by this app. The Pack was not installed.',

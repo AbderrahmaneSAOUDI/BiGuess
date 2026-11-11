@@ -37,6 +37,13 @@ final class LocalContentRuntime {
           supportDirectory ?? await getApplicationSupportDirectory();
       await directory.create(recursive: true);
       final store = LocalPackStore(Directory(p.join(directory.path, 'packs')));
+      // Local recovery is bounded and never starts a network request. Failure
+      // to remove abandoned bytes must not hide valid installed gameplay.
+      try {
+        await store.recoverInterruptedDownloads();
+      } on FileSystemException {
+        // Retry cleanup at the next startup or explicit download.
+      }
       // An explicit developer seed is optional on subsequent offline restarts.
       if (importFile != null && await importFile.exists()) {
         await store.install(importFile);

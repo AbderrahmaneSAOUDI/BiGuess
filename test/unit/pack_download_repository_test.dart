@@ -175,7 +175,12 @@ void main() {
                 : manifestBytes,
           );
         } else if (request.uri.path.endsWith('/archive.biguesspack')) {
-          if (mode == 'partial') {
+          if (mode == 'slow-archive') {
+            response.add(archiveBytes.sublist(0, archiveBytes.length ~/ 2));
+            await response.flush();
+            await Future<void>.delayed(const Duration(milliseconds: 150));
+            response.add(archiveBytes.sublist(archiveBytes.length ~/ 2));
+          } else if (mode == 'partial') {
             response.add(archiveBytes.sublist(0, archiveBytes.length ~/ 2));
           } else if (mode == 'archive-corrupt') {
             response.add([
@@ -266,6 +271,80 @@ void main() {
       } finally {
         runtime.close();
       }
+    },
+  );
+
+  test(
+    'cancellation aborts an in-flight update, cleans temp and preserves prior content',
+    () async {
+      final previous = await repository.download(summary);
+      await prepare(revision: 2);
+      mode = 'slow-archive';
+      final cancellation = PackDownloadCancellation();
+      await expectLater(
+        repository.download(
+          summary,
+          cancellation: cancellation,
+          onProgress: (progress) {
+            if (progress.phase == PackDownloadPhase.downloading &&
+                progress.receivedBytes > 0) {
+              cancellation.cancel();
+            }
+          },
+        ),
+        failure('cancelled'),
+      );
+      expect(
+        (await store.readInstalled(summary.id))!.directory.path,
+        previous.directory.path,
+      );
+      expect(
+        await store.root
+            .list()
+            .where((e) => p.basename(e.path).startsWith('download-'))
+            .toList(),
+        isEmpty,
+      );
+      mode = null;
+      expect((await repository.download(summary)).manifest.pack.revision, 2);
+    },
+  );
+
+  test(
+    'cancel before activation never commits; pre-cancelled jobs make no HTTP request',
+    () async {
+      final token = PackDownloadCancellation()..cancel();
+      await expectLater(
+        repository.download(summary, cancellation: token),
+        failure('cancelled'),
+      );
+      expect(requests, isEmpty);
+      final previous = await repository.download(summary);
+      await prepare(revision: 2);
+      final installing = PackDownloadCancellation();
+      await expectLater(
+        repository.download(
+          summary,
+          cancellation: installing,
+          onProgress: (progress) {
+            if (progress.phase == PackDownloadPhase.installing) {
+              installing.cancel();
+            }
+          },
+        ),
+        failure('cancelled'),
+      );
+      expect(
+        (await store.readInstalled(summary.id))!.directory.path,
+        previous.directory.path,
+      );
+      expect(
+        await store.root
+            .list()
+            .where((e) => p.basename(e.path).startsWith('download-'))
+            .toList(),
+        isEmpty,
+      );
     },
   );
 

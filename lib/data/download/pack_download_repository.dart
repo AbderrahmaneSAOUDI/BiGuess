@@ -25,10 +25,43 @@ class PackDownloadFailure implements Exception {
   String toString() => 'PackDownloadFailure($code)';
 }
 
+/// Per-job cancellation. A cancelled transfer always restarts from byte zero.
+class PackDownloadCancellation {
+  final _done = Completer<void>();
+  final _listeners = <void Function()>{};
+  bool get isCancelled => _done.isCompleted;
+  void cancel() {
+    if (isCancelled) return;
+    _done.complete();
+    for (final listener in _listeners.toList()) {
+      listener();
+    }
+  }
+
+  void throwIfCancelled() {
+    if (isCancelled) throw const PackDownloadFailure('cancelled');
+  }
+
+  void Function() listen(void Function() callback) {
+    if (isCancelled) {
+      callback();
+    } else {
+      _listeners.add(callback);
+    }
+    return () => _listeners.remove(callback);
+  }
+
+  Future<T> race<T>(Future<T> operation) => Future.any([
+    operation,
+    _done.future.then<T>((_) => throw const PackDownloadFailure('cancelled')),
+  ]);
+}
+
 abstract interface class PackDownloadRepository {
   Future<InstalledLocalPack> download(
     CatalogPackSummary summary, {
     void Function(PackDownloadProgress)? onProgress,
+    PackDownloadCancellation? cancellation,
   });
   void close();
 }
@@ -51,6 +84,7 @@ class HttpPackDownloadRepository implements PackDownloadRepository {
   final Duration requestTimeout;
   HttpClient? _client;
   bool _closed = false, _busy = false;
+  PackDownloadCancellation? _activeCancellation;
   HttpClient get _http =>
       _client ??= (HttpClient()..connectionTimeout = requestTimeout);
 
@@ -58,18 +92,25 @@ class HttpPackDownloadRepository implements PackDownloadRepository {
   Future<InstalledLocalPack> download(
     CatalogPackSummary summary, {
     void Function(PackDownloadProgress)? onProgress,
+    PackDownloadCancellation? cancellation,
   }) async {
     if (_closed) throw const PackDownloadFailure('closed');
     if (_busy) throw const PackDownloadFailure('busy');
     if (!summary.available) throw const PackDownloadFailure('unavailable');
     _busy = true;
+    final token = cancellation ?? PackDownloadCancellation();
+    _activeCancellation = token;
+    PackDownloadStaging? lease;
     Directory? staging;
     try {
+      token.throwIfCancelled();
+      await store.recoverInterruptedDownloads();
+      token.throwIfCancelled();
       catalogId(summary.id);
       catalogId(summary.topicId);
       final prefix = '/content/v1/packs/${Uri.encodeComponent(summary.id)}';
       final descriptor = _json(
-        await _bytes(base.resolve('$prefix/download'), 64 * 1024),
+        await _bytes(base.resolve('$prefix/download'), 64 * 1024, token: token),
       );
       _record(descriptor, {
         'protocolVersion',
@@ -102,7 +143,11 @@ class HttpPackDownloadRepository implements PackDownloadRepository {
         throw const PackDownloadFailure('corrupt');
       }
       final receipt = _json(
-        await _bytes(revisionBase.resolve('signature'), 64 * 1024),
+        await _bytes(
+          revisionBase.resolve('signature'),
+          64 * 1024,
+          token: token,
+        ),
       );
       final statement = await _verifyReceipt(receipt, summary);
       if (descriptor['archiveSha256'] != statement['archiveSha256'] ||
@@ -121,6 +166,7 @@ class HttpPackDownloadRepository implements PackDownloadRepository {
         manifestUri,
         manifestSize,
         exact: manifestSize,
+        token: token,
       );
       _verifyBytes(manifestBytes, statement['manifestSha256']);
       final json = _json(manifestBytes);
@@ -135,8 +181,10 @@ class HttpPackDownloadRepository implements PackDownloadRepository {
       }
       // Temp bytes stay under application-private Pack storage and never enter
       // a public gallery. Every exit cleans partial files; no pointer exists yet.
-      await store.root.create(recursive: true);
-      staging = await store.root.createTemp('download-');
+      token.throwIfCancelled();
+      lease = await store.createDownloadStaging();
+      staging = lease.directory;
+      token.throwIfCancelled();
       final archive = File('${staging.path}/archive.biguesspack');
       final output = await archive.open(mode: FileMode.writeOnly);
       final digest = _DigestSink();
@@ -146,18 +194,24 @@ class HttpPackDownloadRepository implements PackDownloadRepository {
         PackDownloadProgress(PackDownloadPhase.downloading, 0, archiveSize),
       );
       try {
-        await _read(archiveUri, archiveSize, (chunk) async {
-          received += chunk.length;
-          hash.add(chunk);
-          await output.writeFrom(chunk);
-          onProgress?.call(
-            PackDownloadProgress(
-              PackDownloadPhase.downloading,
-              received,
-              archiveSize,
-            ),
-          );
-        }, exact: archiveSize);
+        await _read(
+          archiveUri,
+          archiveSize,
+          (chunk) async {
+            received += chunk.length;
+            hash.add(chunk);
+            await output.writeFrom(chunk);
+            onProgress?.call(
+              PackDownloadProgress(
+                PackDownloadPhase.downloading,
+                received,
+                archiveSize,
+              ),
+            );
+          },
+          exact: archiveSize,
+          token: token,
+        );
         await output.flush();
       } finally {
         hash.close();
@@ -181,6 +235,7 @@ class HttpPackDownloadRepository implements PackDownloadRepository {
         throw const PackDownloadFailure('corrupt');
       }
       if (_closed) throw const PackDownloadFailure('closed');
+      token.throwIfCancelled();
       onProgress?.call(
         PackDownloadProgress(
           PackDownloadPhase.installing,
@@ -188,14 +243,19 @@ class HttpPackDownloadRepository implements PackDownloadRepository {
           archiveSize,
         ),
       );
-      return await store.install(archive);
+      return await store.install(
+        archive,
+        checkCancelled: token.throwIfCancelled,
+      );
     } on PackDownloadFailure {
       rethrow;
     } on TimeoutException {
       throw const PackDownloadFailure('timeout');
     } on SocketException {
+      token.throwIfCancelled();
       throw const PackDownloadFailure('offline');
     } on HttpException {
+      token.throwIfCancelled();
       throw const PackDownloadFailure('offline');
     } on FileSystemException catch (error) {
       final noSpace =
@@ -207,13 +267,11 @@ class HttpPackDownloadRepository implements PackDownloadRepository {
     } on FormatException {
       throw const PackDownloadFailure('corrupt');
     } finally {
-      _busy = false;
-      if (staging != null) {
-        try {
-          await staging.delete(recursive: true);
-        } on FileSystemException {
-          /* Best effort cleanup. */
-        }
+      try {
+        if (lease != null) await lease.release();
+      } finally {
+        _activeCancellation = null;
+        _busy = false;
       }
     }
   }
@@ -296,11 +354,22 @@ class HttpPackDownloadRepository implements PackDownloadRepository {
     return s;
   }
 
-  Future<Uint8List> _bytes(Uri uri, int limit, {int? exact}) async {
+  Future<Uint8List> _bytes(
+    Uri uri,
+    int limit, {
+    int? exact,
+    required PackDownloadCancellation token,
+  }) async {
     final builder = BytesBuilder(copy: false);
-    await _read(uri, limit, (chunk) async {
-      builder.add(chunk);
-    }, exact: exact);
+    await _read(
+      uri,
+      limit,
+      (chunk) async {
+        builder.add(chunk);
+      },
+      exact: exact,
+      token: token,
+    );
     return builder.takeBytes();
   }
 
@@ -309,16 +378,36 @@ class HttpPackDownloadRepository implements PackDownloadRepository {
     int limit,
     Future<void> Function(List<int>) consume, {
     int? exact,
+    required PackDownloadCancellation token,
   }) async {
     HttpClientRequest? request;
+    final detach = token.listen(
+      () => request?.abort(const PackDownloadFailure('cancelled')),
+    );
     try {
-      request = await _http.getUrl(uri).timeout(requestTimeout);
-      request.followRedirects = false;
-      request.headers.set(
+      token.throwIfCancelled();
+      final openedRequest = await token.race(
+        _http
+            .getUrl(uri)
+            .then((opened) {
+              if (token.isCancelled) {
+                opened.abort(const PackDownloadFailure('cancelled'));
+              }
+              return opened;
+            })
+            .timeout(requestTimeout),
+      );
+      request = openedRequest;
+      token.throwIfCancelled();
+      openedRequest.followRedirects = false;
+      openedRequest.headers.set(
         HttpHeaders.acceptHeader,
         'application/json, application/zip',
       );
-      final response = await request.close().timeout(requestTimeout);
+      final response = await token.race(
+        openedRequest.close().timeout(requestTimeout),
+      );
+      token.throwIfCancelled();
       if ({403, 404, 410}.contains(response.statusCode)) {
         throw const PackDownloadFailure('unavailable');
       }
@@ -335,23 +424,30 @@ class HttpPackDownloadRepository implements PackDownloadRepository {
       await (() async {
         await for (final chunk in response) {
           if (_closed) throw const PackDownloadFailure('closed');
+          token.throwIfCancelled();
           count += chunk.length;
           if (count > limit) throw const PackDownloadFailure('corrupt');
           await consume(chunk);
+          token.throwIfCancelled();
         }
       })().timeout(requestTimeout);
+      token.throwIfCancelled();
       if (exact != null && count != exact) {
         throw const PackDownloadFailure('corrupt');
       }
     } catch (_) {
       request?.abort();
+      token.throwIfCancelled();
       rethrow;
+    } finally {
+      detach();
     }
   }
 
   @override
   void close() {
     _closed = true;
+    _activeCancellation?.cancel();
     _client?.close(force: true);
   }
 }

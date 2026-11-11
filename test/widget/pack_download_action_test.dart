@@ -18,7 +18,7 @@ import '../unit/catalog_controller_test.dart' show FakeCatalogRepository;
 
 void main() {
   testWidgets(
-    'explicit Download shows progress, storage error and manual retry; success enables local Pack',
+    'explicit Download supports reopening progress, cancellation, storage error and retry',
     (tester) async {
       final directory = (await tester.runAsync(
         () => Directory.systemTemp.createTemp('download-widget-'),
@@ -74,7 +74,21 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
       expect(repository.calls, 1);
       expect(find.textContaining('10 / 20 bytes'), findsOneWidget);
+      await tester.tap(find.text('Close'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('Progress'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('download-fixture-pack')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(repository.calls, 1);
+      await tester.tap(find.text('Cancel download'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.textContaining('Download cancelled.'), findsOneWidget);
       repository.hold!.complete();
+      repository.hold = null;
+      await tester.tap(find.text('Retry download'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
       expect(find.textContaining('Not enough private storage'), findsOneWidget);

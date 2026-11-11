@@ -49,6 +49,32 @@ class PackStorageIo {
   }
 }
 
+/// A temporary download owns an OS lease until cleanup. Recovery never removes
+/// a live transfer, including transfers in another application process.
+final class PackDownloadStaging {
+  PackDownloadStaging._(this.directory, this._lease);
+  final Directory directory;
+  final RandomAccessFile _lease;
+  bool _released = false;
+  static final _active = <String>{};
+  Future<void> release() async {
+    if (_released) return;
+    _released = true;
+    try {
+      await directory.delete(recursive: true);
+    } on FileSystemException {
+      // Startup/next deliberate transfer can retry cleanup once the lease ends.
+    } finally {
+      _active.remove(directory.path);
+      try {
+        await _lease.close();
+      } on FileSystemException {
+        /* Cleanup must not mask the job result. */
+      }
+    }
+  }
+}
+
 /// Local file importer, independent of network, UI and the legacy catalog.
 ///
 /// Metadata and images live in one immutable generation. The only commit point
@@ -79,9 +105,14 @@ final class LocalPackStore {
 
   /// Import a self-contained .biguesspack ZIP before making it discoverable.
   /// All writers in this process must use the same owning isolate.
-  Future<InstalledLocalPack> install(File source) => _exclusive(() async {
+  Future<InstalledLocalPack> install(
+    File source, {
+    void Function()? checkCancelled,
+  }) => _exclusive(() async {
+    checkCancelled?.call();
     final archive = LocalPackFile.decode(await _readBounded(source), limits);
     final manifest = archive.manifest;
+    checkCancelled?.call();
 
     final previous = await readInstalled(manifest.pack.id);
     if (previous != null) {
@@ -92,7 +123,10 @@ final class LocalPackStore {
               manifest.digest != old.digest)) {
         throw const FormatException('Conflicting or older Pack revision');
       }
-      if (manifest.digest == old.digest) return previous;
+      if (manifest.digest == old.digest) {
+        checkCancelled?.call();
+        return previous;
+      }
     }
     final cardIds = manifest.cards.map((card) => card.id).toSet();
     final installedPacks = await readAllInstalled();
@@ -115,12 +149,20 @@ final class LocalPackStore {
 
     final packDirectory = _packDirectory(manifest.pack.id);
     await packDirectory.create(recursive: true);
+    await _recoverPendingGeneration(packDirectory, 2);
+    if (await File(p.join(packDirectory.path, 'active.pending')).exists()) {
+      throw FileSystemException(
+        'Interrupted activation cleanup failed',
+        packDirectory.path,
+      );
+    }
     // A killed writer never activated staging. Recover under the writer lock.
     await for (final entry in packDirectory.list(followLinks: false)) {
       if (entry is Directory && p.basename(entry.path).startsWith('staging-')) {
         await entry.delete(recursive: true);
       }
     }
+    checkCancelled?.call();
     var staged = await packDirectory.createTemp('staging-');
     final pending = File(p.join(packDirectory.path, 'active.pending'));
     var activated = false;
@@ -129,6 +171,7 @@ final class LocalPackStore {
         File(p.join(staged.path, PrivatePackImages.fileName)),
         PrivatePackImages.encode(manifest, archive.objects),
       );
+      checkCancelled?.call();
       await PrivatePackImages.verify(manifest, staged);
       final metadata = File(p.join(staged.path, 'manifest.json'));
       await _io.write(metadata, manifest.metadataBytes);
@@ -136,15 +179,21 @@ final class LocalPackStore {
           manifest.digest) {
         throw const FormatException('Staged metadata integrity check failed');
       }
+      checkCancelled?.call();
       final name = p
           .basename(staged.path)
           .replaceFirst('staging-', 'generation-');
-      staged = await staged.rename(p.join(packDirectory.path, name));
-      final result = InstalledLocalPack._(manifest, staged);
+      // Persist the intended generation before the directory rename. A killed
+      // writer leaves enough evidence to reclaim an unactivated generation.
       await _io.write(pending, utf8.encode(name));
       if (utf8.decode(await _readBounded(pending, limit: 128)) != name) {
         throw const FormatException('Staged pointer integrity check failed');
       }
+      staged = await staged.rename(p.join(packDirectory.path, name));
+      final result = InstalledLocalPack._(manifest, staged);
+      // Cancellation is effective until the commit starts. Once the atomic
+      // pointer rename begins, completion wins and must be reported as installed.
+      checkCancelled?.call();
       await _io.activate(pending, File(p.join(packDirectory.path, 'active')));
       activated = true;
       return result;
@@ -160,6 +209,132 @@ final class LocalPackStore {
       }
     }
   });
+
+  /// Create staging and acquire its lease while recovery is excluded.
+  Future<PackDownloadStaging> createDownloadStaging() => _exclusive(() async {
+    final directory = await Directory(
+      await root.resolveSymbolicLinks(),
+    ).createTemp('download-');
+    RandomAccessFile? lease;
+    try {
+      lease = await File(
+        p.join(directory.path, '.lease'),
+      ).open(mode: FileMode.append);
+      await lease.lock(FileLock.exclusive);
+      PackDownloadStaging._active.add(directory.path);
+      return PackDownloadStaging._(directory, lease);
+    } catch (_) {
+      await lease?.close();
+      try {
+        await directory.delete(recursive: true);
+      } on FileSystemException {
+        /* Retry on recovery. */
+      }
+      rethrow;
+    }
+  });
+
+  /// Remove a bounded number of owned abandoned temporary entries. This is local
+  /// IO only; it never restarts network or removes previously active generations.
+  Future<int> recoverInterruptedDownloads({
+    int maxEntries = 8,
+  }) => _exclusive(() async {
+    if (maxEntries < 1 || maxEntries > 64) {
+      throw ArgumentError.value(maxEntries);
+    }
+    var removed = 0;
+    await for (final entry in root.list(followLinks: false)) {
+      if (removed >= maxEntries) break;
+      if (entry is! Directory) continue;
+      final name = p.basename(entry.path);
+      if (RegExp(r'^download-[A-Za-z0-9]+$').hasMatch(name)) {
+        if (PackDownloadStaging._active.contains(
+          await entry.resolveSymbolicLinks(),
+        )) {
+          continue;
+        }
+        RandomAccessFile? lease;
+        try {
+          lease = await File(
+            p.join(entry.path, '.lease'),
+          ).open(mode: FileMode.append);
+          await lease.lock(FileLock.exclusive);
+          await entry.delete(recursive: true);
+          removed++;
+        } on FileSystemException {
+          // A live transfer holds the nonblocking lease, or cleanup cannot run.
+        } finally {
+          await lease?.close();
+        }
+      } else if (RegExp(r'^[a-f0-9]{64}$').hasMatch(name)) {
+        removed += await _recoverPendingGeneration(entry, maxEntries - removed);
+        await for (final temporary in entry.list(followLinks: false)) {
+          if (removed >= maxEntries) break;
+          final child = p.basename(temporary.path);
+          if (temporary is Directory &&
+              RegExp(r'^staging-[A-Za-z0-9]+$').hasMatch(child)) {
+            try {
+              await temporary.delete(recursive: true);
+              removed++;
+            } on FileSystemException {
+              /* Best effort. */
+            }
+          }
+        }
+      }
+    }
+    return removed;
+  });
+
+  /// A pending pointer exists only before the atomic commit. Reclaim its
+  /// never-activated target first; retain the pointer if budget or IO prevents
+  /// completing cleanup, so a later pass can safely finish the operation.
+  Future<int> _recoverPendingGeneration(Directory pack, int budget) async {
+    if (budget < 1) return 0;
+    final pending = File(p.join(pack.path, 'active.pending'));
+    if (!await pending.exists()) return 0;
+    var removed = 0;
+    try {
+      final String target;
+      try {
+        target = utf8.decode(await _readBounded(pending, limit: 128));
+      } on FormatException {
+        // New writers verify pending bytes before renaming staging. Malformed
+        // pending bytes cannot refer to a renamed generation.
+        await pending.delete();
+        return 1;
+      }
+      final active = File(p.join(pack.path, 'active'));
+      final String? activeName;
+      try {
+        activeName = await active.exists()
+            ? utf8.decode(await _readBounded(active, limit: 128))
+            : null;
+      } on FormatException {
+        // Uncertain active identity: retain the generation and its evidence.
+        return 0;
+      }
+      if (activeName != null &&
+          !RegExp(r'^generation-[A-Za-z0-9]+$').hasMatch(activeName)) {
+        return 0;
+      }
+      if (RegExp(r'^generation-[A-Za-z0-9]+$').hasMatch(target) &&
+          target != activeName) {
+        final generation = Directory(p.join(pack.path, target));
+        if (await FileSystemEntity.type(generation.path, followLinks: false) ==
+            FileSystemEntityType.directory) {
+          await generation.delete(recursive: true);
+          removed++;
+          if (removed >= budget) return removed;
+        }
+      }
+      await pending.delete();
+      removed++;
+    } on FileSystemException {
+      /* Preserve pending evidence for a later pass. */
+    }
+    return removed;
+  }
 
   /// Reopens and verifies the committed generation, including its images.
   /// Unreferenced directories and pending pointers are never considered installed.
