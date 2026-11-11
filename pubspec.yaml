@@ -2,7 +2,7 @@ name: biguess
 description: A guess image game with multiple categories.
 publish_to: 'none'
 
-version: 1.533.136+81
+version: 1.533.137+82
 
 environment:
   sdk: '>=3.10.0 <4.0.0'
@@ -26,6 +26,7 @@ dependencies:
   crypto: ^3.0.8
   archive: ^4.0.7
   image: ^4.5.4
+  cryptography: ^2.9.0
 
 dev_dependencies:
   flutter_test:

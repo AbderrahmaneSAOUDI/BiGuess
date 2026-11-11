@@ -9,16 +9,18 @@ import '../repositories/legacy_manifest_content_repository.dart';
 import '../repositories/sqlite_content_repository.dart';
 import 'local_pack_store.dart';
 
-/// Startup-only bridge from committed private generations to the screen API.
+/// Bridge from committed private generations to the screen API at startup and
+/// after an explicit verified installation.
 /// The separate SQLite projection is disposable metadata, never installation
 /// authority. No catalog/sync database or active game is modified here.
 final class LocalContentRuntime {
   static const databaseName = 'biguess_installed_content.sqlite';
-  final ContentRepository repository;
+  ContentRepository _repository;
+  ContentRepository get repository => _repository;
   final LocalPackStore? store;
   final Object? failure;
 
-  const LocalContentRuntime._(this.repository, this.store, [this.failure]);
+  LocalContentRuntime._(this._repository, this.store, [this.failure]);
 
   bool get usesSqlite => repository is SqliteContentRepository;
 
@@ -70,5 +72,23 @@ final class LocalContentRuntime {
   void close() {
     final local = repository;
     if (local is SqliteContentRepository) local.close();
+  }
+
+  /// Reproject only committed, verified private generations after an explicit
+  /// install. Callers invalidate their repository binding after this completes.
+  /// Existing game sessions already own immutable Cards and generation paths.
+  Future<void> reloadInstalled() async {
+    final localStore = store;
+    if (localStore == null) {
+      throw StateError('Local Pack storage is unavailable');
+    }
+    final next = await open(supportDirectory: localStore.root.parent);
+    if (next.failure != null || !next.usesSqlite) {
+      next.close();
+      throw StateError('Installed Pack projection could not be opened');
+    }
+    final previous = _repository;
+    _repository = next.repository;
+    if (previous is SqliteContentRepository) previous.close();
   }
 }

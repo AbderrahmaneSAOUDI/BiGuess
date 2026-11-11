@@ -535,6 +535,31 @@ void main() {
     expect(await store.readAllInstalled(), hasLength(1));
   });
 
+  test(
+    'a different Pack cannot conflict with installed Topic metadata',
+    () async {
+      final first = await store.install(source);
+      final other = copy();
+      pack(other)['id'] = 'other-pack';
+      (other['topic'] as Map<String, dynamic>)['name'] = 'Conflicting Topic';
+      for (final card in cards(other)) {
+        card['packId'] = 'other-pack';
+        card['id'] = 'other-${card['id']}';
+      }
+      for (final rights
+          in (other['provenance'] as Map<String, dynamic>)['cardRights']
+              as List) {
+        rights['id'] = 'other-${rights['id']}';
+      }
+      await expectLater(
+        store.install(await writePack(other)),
+        throwsFormatException,
+      );
+      await expectPreviousIntact(first);
+      expect(await store.readAllInstalled(), hasLength(1));
+    },
+  );
+
   test('concurrent installers serialize and reuse one generation', () async {
     final installed = await Future.wait(
       List.generate(4, (_) => LocalPackStore(root).install(source)),

@@ -72,9 +72,11 @@ While this roadmap organizes execution serially for a single-agent workflow, thi
 
 **Implementation evidence:** [T39 verification](docs/migration/T39-VERIFICATION.md). Anonymous v1 summaries use origin-separated atomic caches, explicit discovery/Refresh and a once-only missing-list fetch on Topic navigation. Installed content remains authoritative and playable offline; summary-only Packs cannot enter gameplay. Mobile: 280 tests; Studio: 288 tests; both analyzers clean. Public catalog: 5 tests; agent setup: 962 checks; automation: 163 tests. Endpoint configuration is opt-in; no deployment or downloads.
 
-### [ ] T40 — Implement verified complete Pack downloads
+### [x] T40 — Implement verified complete Pack downloads
 **Agent task:** Download only published content from public v1 endpoints; check manifest/receipt trust, hashes, sizes, signatures and pinned keys, then atomically install via existing local Pack store. Include progress, retry, timeout, no-space and corruption states; download is user initiated, not automatic. Avoid writing images to public gallery folders.
 **Acceptance:** Cleared fixture Pack survives restart and airplane mode; tampering, untrusted key, offline/error and partial downloads fail without marking Pack playable or destroying its prior revision.
+
+**Implementation evidence:** [T40 verification](docs/migration/T40-VERIFICATION.md). Explicit Download/update actions verify pinned Ed25519 receipts, manifest/archive identity, hashes, sizes and cleared provenance before private atomic installation. Failed downloads retain the prior revision; manual retry, progress, timeout, no-space and corruption states are covered. Signed fixture reopens through SQLite/private images with its server stopped; the host offline gameplay gate passes with zero HTTP clients. Mobile: 298 tests and clean analysis; public publication/download regression: 8 tests; agent setup: 962 checks; automation: 163 tests. Origin and public trust pins remain build configuration; no deployment or production publishing. Physical-device airplane-mode validation remains a separate device gate.
 
 ### [ ] T41 — Add download concurrency, interruption recovery, and atomic activation
 **Agent task:** Keep existing content usable during downloads/updates; limit simultaneous jobs, stage writes in private storage, resume or safely restart interrupted requests, and support cancel/retry. Never mutate a running GameSession snapshot.

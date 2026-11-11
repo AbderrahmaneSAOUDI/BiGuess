@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import '../../../core/constants/app_constants.dart';
+import '../../../data/catalog/catalog_models.dart';
 import '../../../domain/models/pack_selection.dart';
 import '../../../domain/use_cases/select_packs_use_case.dart';
 import '../../../providers/pack_selection_controller.dart';
 import '../../../providers/catalog_controller.dart';
 import '../../widgets/common/catalog_status.dart';
+import '../../widgets/common/pack_download_action.dart';
 import '../../widgets/animations/animated_glass_app_bar_background.dart';
 import '../../widgets/animations/interactive_scale_card.dart';
 import '../../widgets/common/glass_icon_button.dart';
@@ -87,6 +89,13 @@ class _PacksScreenState extends ConsumerState<PacksScreen> {
     final extendedStatus = packs.any(
       (pack) => pack.installed && pack.unavailableOnline,
     );
+    final catalog = ref.watch(catalogBrowseProvider).snapshot;
+    final downloadable = {
+      for (final summary
+          in catalog?.packsForTopic(id ?? '') ?? <CatalogPackSummary>[])
+        if (summary.available) summary.id: summary,
+    };
+    final hasDownloadActions = downloadable.isNotEmpty;
 
     return Scaffold(
       extendBodyBehindAppBar: true,
@@ -159,6 +168,7 @@ class _PacksScreenState extends ConsumerState<PacksScreen> {
                       maxCrossAxisExtent: 280 * textScale,
                       mainAxisExtent:
                           (extendedStatus ? 224 : 184) +
+                          (hasDownloadActions ? 64 : 0) +
                           (textScale > 1 ? (textScale - 1) * 110 : 0),
                       crossAxisSpacing: 16,
                       mainAxisSpacing: 16,
@@ -192,6 +202,21 @@ class _PacksScreenState extends ConsumerState<PacksScreen> {
                                   isAvailable &&
                                   (selection?.packIds.contains(pack.id) ??
                                       false),
+                              downloadAction:
+                                  downloadable[pack.id] != null &&
+                                      !option.unavailableOnline &&
+                                      ((!option.installed &&
+                                              option.availability ==
+                                                  PackAvailability
+                                                      .downloadRequired) ||
+                                          (option.installed &&
+                                              downloadable[pack.id]!.revision >
+                                                  pack.revision))
+                                  ? PackDownloadAction(
+                                      summary: downloadable[pack.id]!,
+                                      update: option.installed,
+                                    )
+                                  : null,
                               onTap:
                                   isAvailable &&
                                       selection?.mode !=
@@ -271,6 +296,7 @@ class _PackCard extends StatelessWidget {
   final PackAvailability availability;
   final bool selected;
   final bool installed, unavailableOnline;
+  final Widget? downloadAction;
   final VoidCallback? onTap;
 
   const _PackCard({
@@ -283,6 +309,7 @@ class _PackCard extends StatelessWidget {
     required this.selected,
     required this.installed,
     required this.unavailableOnline,
+    this.downloadAction,
     this.onTap,
   });
 
@@ -380,6 +407,7 @@ class _PackCard extends StatelessWidget {
                           : Colors.grey.withValues(alpha: 0.6),
                     ),
                   ),
+                  if (downloadAction != null) downloadAction!,
                 ],
               ),
             ),

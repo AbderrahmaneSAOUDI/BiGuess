@@ -103,6 +103,11 @@ final class LocalPackStore {
     }
     for (final installed in installedPacks) {
       if (installed.manifest.pack.id != manifest.pack.id &&
+          installed.manifest.topic.id == manifest.topic.id &&
+          installed.manifest.topic != manifest.topic) {
+        throw const FormatException('Conflicting installed Topic metadata');
+      }
+      if (installed.manifest.pack.id != manifest.pack.id &&
           installed.cards.any((card) => cardIds.contains(card.id))) {
         throw const FormatException('Card ID belongs to another Pack');
       }
