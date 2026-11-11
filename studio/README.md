@@ -416,3 +416,20 @@ content; refresh and explicitly discard/recreate the conflicting draft. Another
 tab's edits cannot silently replace the queue being committed. Cached content
 never polls; timestamps distinguish complete sync from acknowledged Commit.
 See [T36 verification](T36-VERIFICATION.md) for boundaries and reproduction.
+
+## Contributor profile and activity (T37)
+
+Open **Profile**, then choose **Refresh profile** to see server-validated lifetime
+contributions. Your verified email, account ID and role identify the signed-in
+account. Collectors see only their own totals and activity. Owner can see all
+contributors, current access roles and historical activity, and choose **View
+contributor activity** for a specific account. **Load more activity** continues a
+fixed audit snapshot; Refresh starts a new one.
+
+Counts come from immutable content-operation audit rows. Local drafts, queued
+changes, private image transfers and publication-review actions are not counted.
+Hiding or deleting content preserves earlier contributions; soft deletion and
+permanent purge have separate counters. Stats are held only in memory and clear
+on session changes. There is no profile polling or public contributor directory.
+See [T37 verification](T37-VERIFICATION.md) and the
+[profile API contract](../contracts/studio/v1/profile.md).

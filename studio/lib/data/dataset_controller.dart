@@ -17,6 +17,8 @@ import 'image_ingestion.dart';
 import 'bulk_card_import.dart';
 import 'dataset_search.dart';
 import 'publication_api.dart';
+import 'profile_api.dart';
+import 'profile_controller.dart';
 
 enum DatasetPhase { idle, loading, ready, offline, error, denied }
 
@@ -30,12 +32,15 @@ class DatasetController extends ChangeNotifier {
     this.storeFactory = createDatasetStore,
     this.imageIngestion,
     this.publication,
-  });
+    this.profileApi,
+  }) : profileController = ProfileController(session: session, api: profileApi);
   final String projectId;
   final StudioSession session;
   final DatasetApi api;
   final ImageIngestionApi? imageIngestion;
   final PublicationApi? publication;
+  final ProfileApi? profileApi;
+  final ProfileController profileController;
   String? uploadingImageDraftId;
   Completer<void>? _imageUploadCancellation;
   bool get canUploadImages =>
@@ -2162,6 +2167,8 @@ class DatasetController extends ChangeNotifier {
     api.close();
     imageIngestion?.close();
     publication?.close();
+    profileController.dispose();
+    profileApi?.close();
     super.dispose();
   }
 }

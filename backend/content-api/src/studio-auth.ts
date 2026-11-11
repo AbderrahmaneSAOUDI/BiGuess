@@ -12,7 +12,7 @@ export class StudioError extends Error {
 export type Role = 'owner_admin' | 'collector';
 export interface Principal { uid: string; email: string; role: Role }
 
-const defaultSuperAdminEmail = 'abderrahmane.saoudi.26@gmail.com';
+export const defaultSuperAdminEmail = 'abderrahmane.saoudi.26@gmail.com';
 
 export async function authenticate(request: Request, env: Env): Promise<Principal> {
   const authorization = request.headers.get('Authorization');

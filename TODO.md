@@ -52,9 +52,11 @@ While this roadmap organizes execution serially for a single-agent workflow, thi
 
 **Implementation evidence:** [T36 verification](studio/T36-VERIFICATION.md), including Chromium offline Commit/Refresh for two isolated Collectors and Owner, stale-tab/server-conflict retention and revoked-access checks. Backend deployment and live-account validation remain separate.
 
-### [ ] T37 — Add contributor profile, role display, and scoped statistics
+### [x] T37 — Add contributor profile, role display, and scoped statistics
 **Agent task:** Show signed-in identity, authoritative role and backend-derived contribution counts. Collector views only their own activity and aggregate counts; Owner can view all contributors and administrative records. Stats count validated operations even when content later changes state, without trusting local counters; no public contributor accounts, XP, leaderboards or badges.
 **Acceptance:** Two-Collector/Owner authorization tests verify no cross-user activity/statistics leakage; stats reconcile with immutable audit records.
+
+**Implementation evidence:** [T37 verification](studio/T37-VERIFICATION.md) and [profile API contract](contracts/studio/v1/profile.md). Local Workerd/D1 tests reconcile immutable audit counts and enforce actor scope; Chromium verifies two Collectors, Owner filtering, pagination and access changes. No backend deployment or remote migration.
 
 ### [ ] T38 — GATE: Import legacy content as private Owner-controlled drafts
 **Agent task:** Reuse the T05 inventory, stable T06 IDs and T32 pipeline to import the existing 922 Anime and 252 Flags assets **only into quarantined, nonpublic Owner-controlled drafts**, unless individual content is confirmed cleared. Do not assign legacy material to arbitrary Collectors or let it appear in their own-contribution lists without an explicit later approved ownership process. Preserve original files, mappings, provenance, import checksums and rollback report. Only rights-cleared fixtures may be released in a test catalog.

@@ -8,7 +8,7 @@ allowed = {'package:flutter/', 'package:flutter_web_plugins/', 'package:flutter_
            'package:firebase_core/', 'package:firebase_auth/', 'package:http/',
            'dart:async', 'dart:convert', 'app/', '../app/', '../presentation/',
            '../auth/', 'auth/', 'studio_', 'presentation/', '../data/', 'data/',
-           'dataset_', 'bulk_card_import', 'publication_', 'indexed_db_', 'network_', 'offline_access_',
+           'dataset_', 'profile_', 'bulk_card_import', 'publication_', 'indexed_db_', 'network_', 'offline_access_',
            'topic_', 'topics_', 'pack_', 'packs_', 'card_', 'cards_', 'image_preparation', 'image_ingestion', 'dart:typed_data', 'dart:math',
            'dart:js_interop', 'package:idb_shim/', 'package:web/'}
 for path in (root / 'lib').rglob('*.dart'):

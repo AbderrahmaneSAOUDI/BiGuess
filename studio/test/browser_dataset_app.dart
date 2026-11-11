@@ -9,6 +9,7 @@ import 'package:biguess_studio/auth/worker_authorization.dart';
 import 'package:biguess_studio/data/dataset_api.dart';
 import 'package:biguess_studio/data/dataset_controller.dart';
 import 'package:biguess_studio/data/image_ingestion.dart';
+import 'package:biguess_studio/data/profile_api.dart';
 import 'package:biguess_studio/data/network_state.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
@@ -85,6 +86,7 @@ Future<void> main() async {
     projectId: 'browser-fixture',
     session: session,
     api: WorkerDatasetApi(api, http.Client()),
+    profileApi: WorkerProfileApi(api, http.Client()),
     imageIngestion: WorkerImageIngestionApi(api, http.Client()),
   )..start();
   runApp(StudioApp(session: session, dataset: dataset));

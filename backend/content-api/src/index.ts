@@ -8,6 +8,7 @@ import { studioCors } from './studio-cors';
 import { studioRead } from './studio-reads';
 import { ingestImage } from './studio-images';
 import { studioPublication } from './studio-publication';
+import { studioProfile } from './studio-profile';
 
 interface Fixture {
   object_key: string;
@@ -44,6 +45,8 @@ export default {
       return studioCors(request, env, async () => {
         try {
           const principal = await authenticate(request, env);
+          const profile = await studioProfile(request, env, principal, studioPath);
+          if (profile) return profile;
           const publication = await studioPublication(request, env, principal, studioPath);
           if (publication) return publication;
           const upload = /^\/studio\/v1\/packs\/([^/]+)\/images$/.exec(path);

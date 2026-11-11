@@ -6,6 +6,7 @@ import '../app/studio_route.dart';
 import '../data/dataset_controller.dart';
 import '../data/studio_dataset.dart';
 import 'topics_page.dart';
+import 'profile_page.dart';
 import 'pack_draft_dialog.dart';
 import 'packs_page.dart';
 import 'cards_page.dart';
@@ -102,12 +103,9 @@ class DatasetPage extends StatelessWidget {
             ),
             const SizedBox(height: 12),
           ],
+          if (route == StudioRoute.profile)
+            ProfilePage(controller: controller.profileController),
           if (ready) ...[
-            if (route == StudioRoute.profile)
-              Text(
-                'Account: ${snapshot.scope.uid}\n'
-                'Role: ${snapshot.scope.role == 'owner_admin' ? 'Owner' : 'Collector'}',
-              ),
             if (route == StudioRoute.dashboard) ...[
               Text(
                 '${snapshot.records.length} synchronized records · '
@@ -125,7 +123,7 @@ class DatasetPage extends StatelessWidget {
             if (route == StudioRoute.cards) CardsPage(controller: controller),
             if (route == StudioRoute.dashboard && snapshot.drafts.isNotEmpty)
               _DraftList(controller: controller, drafts: snapshot.drafts),
-          ] else if (!controller.busy)
+          ] else if (!controller.busy && route != StudioRoute.profile)
             const Text(
               'No authorized browser dataset is open. Complete an online '
               'access check and sync before using an offline workspace.',
