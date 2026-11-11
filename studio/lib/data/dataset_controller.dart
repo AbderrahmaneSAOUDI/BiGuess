@@ -15,6 +15,7 @@ import 'topic_taxonomy.dart';
 import 'pack_summary.dart';
 import 'image_ingestion.dart';
 import 'bulk_card_import.dart';
+import 'dataset_search.dart';
 
 enum DatasetPhase { idle, loading, ready, offline, error, denied }
 
@@ -62,12 +63,19 @@ class DatasetController extends ChangeNotifier {
     _sessionChanged();
   }
 
+  DatasetSearchIndex? _searchIndex;
+
+  DatasetSearchIndex get searchIndex =>
+      _searchIndex ??= DatasetSearchIndex.build(this);
+
   bool _current(int epoch) => !_disposed && epoch == _epoch;
   void _notify() {
+    _searchIndex = null;
     if (!_disposed) notifyListeners();
   }
 
   void _sessionChanged() {
+    _searchIndex = null;
     cancelImageUpload();
     final epoch = ++_epoch;
     final oldStore = _store;

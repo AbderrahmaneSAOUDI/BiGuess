@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../data/card_summary.dart';
 import '../data/dataset_controller.dart';
+import '../data/dataset_search.dart';
 import '../data/studio_dataset.dart';
 import 'card_draft_dialog.dart';
 import 'card_messages.dart';
@@ -23,6 +24,21 @@ class _CardsPageState extends State<CardsPage> {
   final _selectedCardIds = <String>{};
   String? _packId;
   String? _scope;
+  int? _difficulty;
+  String? _state;
+  DuplicateFilter _duplicateFilter = DuplicateFilter.all;
+  bool _incompleteImageOnly = false;
+  CardSortOption _sort = CardSortOption.nameAsc;
+  int _page = 1;
+  static const _pageSize = 50;
+  bool _showFilters = false;
+
+  bool get _isFiltered =>
+      _difficulty != null ||
+      _state != null ||
+      _duplicateFilter != DuplicateFilter.all ||
+      _incompleteImageOnly ||
+      _sort != CardSortOption.nameAsc;
   @override
   void initState() {
     super.initState();
@@ -48,6 +64,12 @@ class _CardsPageState extends State<CardsPage> {
       _search.clear();
       _selectedCardIds.clear();
       _packId = null;
+      _difficulty = null;
+      _state = null;
+      _duplicateFilter = DuplicateFilter.all;
+      _incompleteImageOnly = false;
+      _sort = CardSortOption.nameAsc;
+      _page = 1;
     }
     setState(() {});
   }
@@ -166,19 +188,38 @@ class _CardsPageState extends State<CardsPage> {
       return const SizedBox.shrink();
     }
     final packs = controller.packs;
-    if (!packs.any((p) => p.id == _packId)) _packId = packs.firstOrNull?.id;
-    final selected = packs.where((p) => p.id == _packId).firstOrNull;
-    final eligible = controller.eligibleCardPacks.any((p) => p.id == _packId);
+    if (_packId != 'all' && !packs.any((p) => p.id == _packId)) {
+      _packId = packs.firstOrNull?.id;
+    }
+    final selected = _packId == 'all'
+        ? null
+        : packs.where((p) => p.id == _packId).firstOrNull;
+    final eligible =
+        _packId != 'all' &&
+        controller.eligibleCardPacks.any((p) => p.id == _packId);
     final owner = controller.scope!.role == 'owner_admin';
-    final query = _search.text.trim().toLowerCase();
-    final cards = controller.cards
-        .where(
-          (card) =>
-              card.packId == _packId &&
-              (card.name.toLowerCase().contains(query) ||
-                  card.id.toLowerCase().contains(query)),
-        )
-        .toList();
+
+    final effectivePackId = _packId == 'all' ? null : _packId;
+    final searchQuery = CardSearchQuery(
+      text: _search.text,
+      packId: effectivePackId,
+      difficulty: _difficulty,
+      state: _state,
+      incompleteImageOnly: _incompleteImageOnly,
+      duplicateFilter: _duplicateFilter,
+      sort: _sort,
+      page: _page,
+      pageSize: _pageSize,
+    );
+    final searchResult = controller.searchIndex.search(searchQuery);
+    final cards = searchResult.items.map((m) => m.card).toList();
+    final allSelectedEligible =
+        _selectedCardIds.isNotEmpty &&
+        _selectedCardIds.every((id) {
+          final card = controller.cards.where((c) => c.id == id).firstOrNull;
+          return card != null &&
+              controller.eligibleCardPacks.any((p) => p.id == card.packId);
+        });
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -203,11 +244,16 @@ class _CardsPageState extends State<CardsPage> {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
+              const DropdownMenuItem(
+                value: 'all',
+                child: Text('All Packs (Global search)'),
+              ),
             ],
             onChanged: (value) => setState(() {
               _packId = value;
               _selectedCardIds.clear();
               _search.clear();
+              _page = 1;
             }),
           ),
         if (selected != null) ...[
@@ -258,260 +304,536 @@ class _CardsPageState extends State<CardsPage> {
             const Text(
               'This Pack is not currently eligible for Card authoring. Refresh or resolve its pending operation.',
             ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _search,
-            decoration: const InputDecoration(
-              labelText: 'Search Cards',
-              prefixIcon: Icon(Icons.search),
+        ],
+        const SizedBox(height: 12),
+        TextField(
+          controller: _search,
+          decoration: InputDecoration(
+            labelText: 'Search Cards',
+            prefixIcon: const Icon(Icons.search),
+            suffixIcon: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_search.text.isNotEmpty)
+                  IconButton(
+                    icon: const Icon(Icons.clear, size: 18),
+                    tooltip: 'Clear search',
+                    onPressed: () => setState(() {
+                      _search.clear();
+                      _page = 1;
+                    }),
+                  ),
+                IconButton(
+                  icon: Icon(
+                    _showFilters || _isFiltered
+                        ? Icons.filter_alt
+                        : Icons.filter_alt_outlined,
+                    color: _isFiltered
+                        ? Theme.of(context).colorScheme.primary
+                        : null,
+                  ),
+                  tooltip: 'Filters & sort',
+                  onPressed: () => setState(() => _showFilters = !_showFilters),
+                ),
+              ],
             ),
-            onChanged: (_) => setState(() {}),
           ),
-          const SizedBox(height: 12),
-          if (cards.isEmpty)
-            const Text('No Cards match this Pack view.')
-          else if (_selectedCardIds.isNotEmpty)
-            Card(
-              color: Theme.of(context).colorScheme.surfaceContainerLow,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                child: Wrap(
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  spacing: 12,
-                  runSpacing: 8,
-                  children: [
-                    Text(
-                      '${_selectedCardIds.length} of ${cards.length} selected',
-                    ),
-                    TextButton(
-                      onPressed: () {
-                        setState(() {
-                          if (_selectedCardIds.length == cards.length) {
-                            _selectedCardIds.clear();
-                          } else {
-                            _selectedCardIds.addAll(cards.map((c) => c.id));
-                          }
-                        });
-                      },
-                      child: Text(
-                        _selectedCardIds.length == cards.length
-                            ? 'Deselect all'
-                            : 'Select all',
+          onChanged: (_) => setState(() => _page = 1),
+        ),
+        if (_showFilters || _isFiltered) ...[
+          const SizedBox(height: 8),
+          Card(
+            color: Theme.of(context).colorScheme.surfaceContainerLowest,
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  DropdownButton<int?>(
+                    value: _difficulty,
+                    isDense: true,
+                    hint: const Text('Difficulty'),
+                    items: const [
+                      DropdownMenuItem(
+                        value: null,
+                        child: Text('All difficulties'),
                       ),
-                    ),
-                    TextButton.icon(
-                      icon: const Icon(Icons.visibility_off, size: 18),
-                      label: const Text('Hide selected'),
-                      onPressed: !eligible
-                          ? null
-                          : () => _bulkHide(context, controller),
-                    ),
-                    TextButton.icon(
-                      icon: const Icon(Icons.tune, size: 18),
-                      label: const Text('Change difficulty'),
-                      onPressed: !eligible
-                          ? null
-                          : () => _bulkDifficulty(context, controller),
-                    ),
-                    if (owner)
-                      TextButton.icon(
-                        icon: const Icon(Icons.delete_outline, size: 18),
-                        label: const Text('Delete selected'),
-                        onPressed: () => _bulkDelete(context, controller),
+                      DropdownMenuItem(value: 1, child: Text('1 (Easy)')),
+                      DropdownMenuItem(value: 2, child: Text('2 (Medium)')),
+                      DropdownMenuItem(value: 3, child: Text('3 (Hard)')),
+                    ],
+                    onChanged: (val) => setState(() {
+                      _difficulty = val;
+                      _page = 1;
+                    }),
+                  ),
+                  DropdownButton<String?>(
+                    value: _state,
+                    isDense: true,
+                    hint: const Text('Status'),
+                    items: [
+                      const DropdownMenuItem(
+                        value: null,
+                        child: Text('All statuses'),
                       ),
-                  ],
-                ),
+                      const DropdownMenuItem(
+                        value: 'active',
+                        child: Text('Active'),
+                      ),
+                      const DropdownMenuItem(
+                        value: 'hidden',
+                        child: Text('Hidden'),
+                      ),
+                      if (owner)
+                        const DropdownMenuItem(
+                          value: 'deleted',
+                          child: Text('Deleted'),
+                        ),
+                    ],
+                    onChanged: (val) => setState(() {
+                      _state = val;
+                      _page = 1;
+                    }),
+                  ),
+                  DropdownButton<DuplicateFilter>(
+                    value: _duplicateFilter,
+                    isDense: true,
+                    items: const [
+                      DropdownMenuItem(
+                        value: DuplicateFilter.all,
+                        child: Text('All cards'),
+                      ),
+                      DropdownMenuItem(
+                        value: DuplicateFilter.anyDuplicate,
+                        child: Text('Any duplicate'),
+                      ),
+                      DropdownMenuItem(
+                        value: DuplicateFilter.byteDuplicate,
+                        child: Text('Identical image bytes'),
+                      ),
+                      DropdownMenuItem(
+                        value: DuplicateFilter.nameDuplicate,
+                        child: Text('Duplicate names'),
+                      ),
+                      DropdownMenuItem(
+                        value: DuplicateFilter.similarName,
+                        child: Text('Similar names'),
+                      ),
+                    ],
+                    onChanged: (val) => setState(() {
+                      if (val != null) {
+                        _duplicateFilter = val;
+                        _page = 1;
+                      }
+                    }),
+                  ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Checkbox(
+                        visualDensity: VisualDensity.compact,
+                        value: _incompleteImageOnly,
+                        onChanged: (val) => setState(() {
+                          _incompleteImageOnly = val ?? false;
+                          _page = 1;
+                        }),
+                      ),
+                      const Text('Missing image'),
+                    ],
+                  ),
+                  DropdownButton<CardSortOption>(
+                    value: _sort,
+                    isDense: true,
+                    items: const [
+                      DropdownMenuItem(
+                        value: CardSortOption.nameAsc,
+                        child: Text('Name (A-Z)'),
+                      ),
+                      DropdownMenuItem(
+                        value: CardSortOption.nameDesc,
+                        child: Text('Name (Z-A)'),
+                      ),
+                      DropdownMenuItem(
+                        value: CardSortOption.difficultyAsc,
+                        child: Text('Difficulty (Low-High)'),
+                      ),
+                      DropdownMenuItem(
+                        value: CardSortOption.difficultyDesc,
+                        child: Text('Difficulty (High-Low)'),
+                      ),
+                      DropdownMenuItem(
+                        value: CardSortOption.revisionDesc,
+                        child: Text('Revision (Newest)'),
+                      ),
+                      DropdownMenuItem(
+                        value: CardSortOption.duplicatesFirst,
+                        child: Text('Duplicates first'),
+                      ),
+                    ],
+                    onChanged: (val) => setState(() {
+                      if (val != null) {
+                        _sort = val;
+                        _page = 1;
+                      }
+                    }),
+                  ),
+                  if (_isFiltered)
+                    TextButton.icon(
+                      icon: const Icon(Icons.clear, size: 16),
+                      label: const Text('Reset filters'),
+                      onPressed: () => setState(() {
+                        _difficulty = null;
+                        _state = null;
+                        _duplicateFilter = DuplicateFilter.all;
+                        _incompleteImageOnly = false;
+                        _sort = CardSortOption.nameAsc;
+                        _page = 1;
+                      }),
+                    ),
+                ],
               ),
             ),
-          for (final card in cards)
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      children: [
-                        Checkbox(
-                          visualDensity: VisualDensity.compact,
-                          materialTapTargetSize:
-                              MaterialTapTargetSize.shrinkWrap,
-                          value: _selectedCardIds.contains(card.id),
-                          onChanged: (val) {
-                            setState(() {
-                              if (val == true) {
-                                _selectedCardIds.add(card.id);
-                              } else {
-                                _selectedCardIds.remove(card.id);
-                              }
-                            });
-                          },
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            card.name,
-                            style: Theme.of(context).textTheme.titleMedium,
+          ),
+        ],
+        const SizedBox(height: 12),
+        if (cards.isEmpty)
+          const Text('No Cards match this Pack view.')
+        else if (_selectedCardIds.isNotEmpty)
+          Card(
+            color: Theme.of(context).colorScheme.surfaceContainerLow,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 12,
+                runSpacing: 8,
+                children: [
+                  Text(
+                    '${_selectedCardIds.length} of ${cards.length} selected',
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      setState(() {
+                        if (_selectedCardIds.length == cards.length) {
+                          _selectedCardIds.clear();
+                        } else {
+                          _selectedCardIds.addAll(cards.map((c) => c.id));
+                        }
+                      });
+                    },
+                    child: Text(
+                      _selectedCardIds.length == cards.length
+                          ? 'Deselect all'
+                          : 'Select all',
+                    ),
+                  ),
+                  TextButton.icon(
+                    icon: const Icon(Icons.visibility_off, size: 18),
+                    label: const Text('Hide selected'),
+                    onPressed: !allSelectedEligible
+                        ? null
+                        : () => _bulkHide(context, controller),
+                  ),
+                  TextButton.icon(
+                    icon: const Icon(Icons.tune, size: 18),
+                    label: const Text('Change difficulty'),
+                    onPressed: !allSelectedEligible
+                        ? null
+                        : () => _bulkDifficulty(context, controller),
+                  ),
+                  if (owner)
+                    TextButton.icon(
+                      icon: const Icon(Icons.delete_outline, size: 18),
+                      label: const Text('Delete selected'),
+                      onPressed: () => _bulkDelete(context, controller),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        for (final match in searchResult.items)
+          Builder(
+            builder: (context) {
+              final card = match.card;
+              final cardEligible = controller.eligibleCardPacks.any(
+                (p) => p.id == card.packId,
+              );
+              return Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          Checkbox(
+                            visualDensity: VisualDensity.compact,
+                            materialTapTargetSize:
+                                MaterialTapTargetSize.shrinkWrap,
+                            value: _selectedCardIds.contains(card.id),
+                            onChanged: (val) {
+                              setState(() {
+                                if (val == true) {
+                                  _selectedCardIds.add(card.id);
+                                } else {
+                                  _selectedCardIds.remove(card.id);
+                                }
+                              });
+                            },
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              card.name,
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (match.hasAnyDuplicate || match.isIncompleteImage)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Wrap(
+                            spacing: 6,
+                            runSpacing: 4,
+                            children: [
+                              if (match.isByteDuplicate)
+                                _badge(
+                                  'Identical image bytes (${match.byteDuplicateCardIds.length})',
+                                  Colors.deepPurple,
+                                ),
+                              if (match.isNameDuplicate)
+                                _badge(
+                                  'Duplicate name (${match.nameDuplicateCardIds.length})',
+                                  Colors.orange,
+                                ),
+                              if (match.isSimilarName)
+                                _badge(
+                                  'Similar name (${match.similarNameCardIds.length})',
+                                  Colors.amber,
+                                ),
+                              if (match.isIncompleteImage)
+                                _badge('Missing image', Colors.red),
+                            ],
                           ),
                         ),
-                      ],
-                    ),
-                    Text('Card ID: ${card.id}'),
-                    Text('Pack: ${card.packId}'),
-                    Text('Difficulty: ${card.difficulty}'),
-                    Text(
-                      card.localImage != null
-                          ? 'Image: ${card.localImage!.filename} · local selection'
-                          : card.imageReference != null
-                          ? 'Image: existing private reference'
-                          : 'Image: unavailable',
-                    ),
-                    if (card.localImage != null)
-                      Semantics(
-                        label: 'Selected image preview',
-                        image: true,
-                        child: Image.memory(
-                          card.localImage!.bytes,
-                          height: 120,
-                          fit: BoxFit.contain,
-                          cacheWidth: 240,
-                          errorBuilder: (_, _, _) =>
-                              const Text('Image preview unavailable.'),
-                        ),
-                      ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '${card.state} · ${card.revision == 0 ? 'New local Card' : 'Revision ${card.revision}'}',
-                    ),
-                    if (owner)
+                      Text('Card ID: ${card.id}'),
+                      Text('Pack: ${card.packId}'),
+                      Text('Difficulty: ${card.difficulty}'),
                       Text(
-                        'Creator: ${card.revision == 0 ? 'Inherited from Pack' : card.createdByUid ?? 'Unassigned legacy content'}',
+                        card.localImage != null
+                            ? 'Image: ${card.localImage!.filename} · local selection'
+                            : card.imageReference != null
+                            ? 'Image: existing private reference'
+                            : 'Image: unavailable',
                       ),
-                    if (card.pending != null) ...[
-                      Text(switch (card.pending!.status) {
-                        DraftStatus.draft => 'Draft — saved locally',
-                        DraftStatus.unsent => 'Unsent commit — queued locally',
-                        DraftStatus.conflict =>
-                          'Conflict — review before queueing',
-                      }),
-                      Text('Pending Card change: ${card.pending!.action}'),
                       if (card.localImage != null)
-                        Text(
-                          card.pending!.uploadedImage == null
-                              ? 'Selected image has not been uploaded. This commit remains local.'
-                              : 'Image uploaded privately — Card commit is still pending.',
+                        Semantics(
+                          label: 'Selected image preview',
+                          image: true,
+                          child: Image.memory(
+                            card.localImage!.bytes,
+                            height: 120,
+                            fit: BoxFit.contain,
+                            cacheWidth: 240,
+                            errorBuilder: (_, _, _) =>
+                                const Text('Image preview unavailable.'),
+                          ),
                         ),
-                      Wrap(
-                        spacing: 12,
-                        runSpacing: 4,
-                        children: [
-                          if (eligible &&
-                              card.localImage?.isPrepared == true &&
-                              card.pending!.status != DraftStatus.conflict) ...[
-                            TextButton(
-                              onPressed:
-                                  controller.canUploadImages &&
-                                      controller.uploadingImageDraftId == null
-                                  ? () => _run(
-                                      context,
-                                      () => controller.uploadCardImage(
-                                        card.pending!.id,
-                                      ),
-                                    )
-                                  : null,
-                              child: const Text('Upload image privately'),
-                            ),
-                            if (controller.uploadingImageDraftId ==
-                                card.pending!.id) ...[
-                              const Text('Uploading private image…'),
+                      const SizedBox(height: 8),
+                      Text(
+                        '${card.state} · ${card.revision == 0 ? 'New local Card' : 'Revision ${card.revision}'}',
+                      ),
+                      if (owner)
+                        Text(
+                          'Creator: ${card.revision == 0 ? 'Inherited from Pack' : card.createdByUid ?? 'Unassigned legacy content'}',
+                        ),
+                      if (card.pending != null) ...[
+                        Text(switch (card.pending!.status) {
+                          DraftStatus.draft => 'Draft — saved locally',
+                          DraftStatus.unsent =>
+                            'Unsent commit — queued locally',
+                          DraftStatus.conflict =>
+                            'Conflict — review before queueing',
+                        }),
+                        Text('Pending Card change: ${card.pending!.action}'),
+                        if (card.localImage != null)
+                          Text(
+                            card.pending!.uploadedImage == null
+                                ? 'Selected image has not been uploaded. This commit remains local.'
+                                : 'Image uploaded privately — Card commit is still pending.',
+                          ),
+                        Wrap(
+                          spacing: 12,
+                          runSpacing: 4,
+                          children: [
+                            if (eligible &&
+                                card.localImage?.isPrepared == true &&
+                                card.pending!.status !=
+                                    DraftStatus.conflict) ...[
                               TextButton(
-                                onPressed: controller.cancelImageUpload,
-                                child: const Text('Cancel image upload'),
+                                onPressed:
+                                    controller.canUploadImages &&
+                                        controller.uploadingImageDraftId == null
+                                    ? () => _run(
+                                        context,
+                                        () => controller.uploadCardImage(
+                                          card.pending!.id,
+                                        ),
+                                      )
+                                    : null,
+                                child: const Text('Upload image privately'),
+                              ),
+                              if (controller.uploadingImageDraftId ==
+                                  card.pending!.id) ...[
+                                const Text('Uploading private image…'),
+                                TextButton(
+                                  onPressed: controller.cancelImageUpload,
+                                  child: const Text('Cancel image upload'),
+                                ),
+                              ],
+                            ],
+                            if (card.pending!.status == DraftStatus.draft)
+                              TextButton(
+                                onPressed: () => _run(
+                                  context,
+                                  () => controller.queueDraft(card.pending!.id),
+                                ),
+                                child: const Text('Queue Card commit'),
+                              ),
+                            if (eligible &&
+                                card.pending!.status != DraftStatus.conflict &&
+                                {
+                                  'create',
+                                  'update',
+                                }.contains(card.pending!.action))
+                              TextButton(
+                                onPressed: () => _edit(context, card),
+                                child: const Text('Edit Card'),
+                              ),
+                            TextButton(
+                              onPressed: () => _run(
+                                context,
+                                () => controller.discardDraft(card.pending!.id),
+                              ),
+                              child: const Text('Discard Card change'),
+                            ),
+                          ],
+                        ),
+                      ] else ...[
+                        const Text('Synced'),
+                        Wrap(
+                          spacing: 12,
+                          runSpacing: 4,
+                          children: [
+                            if (cardEligible &&
+                                {'active', 'hidden'}.contains(card.state))
+                              TextButton(
+                                onPressed: () => _edit(context, card),
+                                child: const Text('Edit Card'),
+                              ),
+                            if (cardEligible && card.state == 'active')
+                              TextButton(
+                                onPressed: () => _run(
+                                  context,
+                                  () => controller.hideCard(
+                                    card.id,
+                                    expectedRevision: card.revision,
+                                  ),
+                                ),
+                                child: const Text('Hide Card'),
+                              ),
+                            if (owner &&
+                                {'active', 'hidden'}.contains(card.state))
+                              TextButton(
+                                onPressed: () =>
+                                    _confirm(context, card, 'delete'),
+                                child: const Text('Delete Card'),
+                              ),
+                            if (owner && card.state == 'deleted') ...[
+                              if (cardEligible)
+                                TextButton(
+                                  onPressed: () =>
+                                      _confirm(context, card, 'restore'),
+                                  child: const Text('Restore Card'),
+                                ),
+                              TextButton(
+                                onPressed: () => _confirm(
+                                  context,
+                                  card,
+                                  'permanently delete',
+                                ),
+                                child: const Text('Permanently delete Card'),
                               ),
                             ],
                           ],
-                          if (card.pending!.status == DraftStatus.draft)
-                            TextButton(
-                              onPressed: () => _run(
-                                context,
-                                () => controller.queueDraft(card.pending!.id),
-                              ),
-                              child: const Text('Queue Card commit'),
-                            ),
-                          if (eligible &&
-                              card.pending!.status != DraftStatus.conflict &&
-                              {
-                                'create',
-                                'update',
-                              }.contains(card.pending!.action))
-                            TextButton(
-                              onPressed: () => _edit(context, card),
-                              child: const Text('Edit Card'),
-                            ),
-                          TextButton(
-                            onPressed: () => _run(
-                              context,
-                              () => controller.discardDraft(card.pending!.id),
-                            ),
-                            child: const Text('Discard Card change'),
-                          ),
-                        ],
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        if (searchResult.totalPages > 1) ...[
+          const SizedBox(height: 12),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Showing ${searchResult.startIndex}–${searchResult.endIndex} of ${searchResult.totalMatches} Cards',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.chevron_left),
+                        tooltip: 'Previous page',
+                        onPressed: _page > 1
+                            ? () => setState(() => _page--)
+                            : null,
                       ),
-                    ] else ...[
-                      const Text('Synced'),
-                      Wrap(
-                        spacing: 12,
-                        runSpacing: 4,
-                        children: [
-                          if (eligible &&
-                              {'active', 'hidden'}.contains(card.state))
-                            TextButton(
-                              onPressed: () => _edit(context, card),
-                              child: const Text('Edit Card'),
-                            ),
-                          if (eligible && card.state == 'active')
-                            TextButton(
-                              onPressed: () => _run(
-                                context,
-                                () => controller.hideCard(
-                                  card.id,
-                                  expectedRevision: card.revision,
-                                ),
-                              ),
-                              child: const Text('Hide Card'),
-                            ),
-                          if (owner &&
-                              {'active', 'hidden'}.contains(card.state))
-                            TextButton(
-                              onPressed: () =>
-                                  _confirm(context, card, 'delete'),
-                              child: const Text('Delete Card'),
-                            ),
-                          if (owner && card.state == 'deleted') ...[
-                            if (eligible)
-                              TextButton(
-                                onPressed: () =>
-                                    _confirm(context, card, 'restore'),
-                                child: const Text('Restore Card'),
-                              ),
-                            TextButton(
-                              onPressed: () =>
-                                  _confirm(context, card, 'permanently delete'),
-                              child: const Text('Permanently delete Card'),
-                            ),
-                          ],
-                        ],
+                      Text('Page $_page of ${searchResult.totalPages}'),
+                      IconButton(
+                        icon: const Icon(Icons.chevron_right),
+                        tooltip: 'Next page',
+                        onPressed: _page < searchResult.totalPages
+                            ? () => setState(() => _page++)
+                            : null,
                       ),
                     ],
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
+          ),
         ],
       ],
+    );
+  }
+
+  Widget _badge(String text, MaterialColor color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.shade50,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.shade200),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 12,
+          color: color.shade900,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
     );
   }
 

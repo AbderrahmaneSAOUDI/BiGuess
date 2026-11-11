@@ -1,5 +1,6 @@
 import 'package:biguess_studio/app/studio_theme.dart';
 import 'package:biguess_studio/data/dataset_controller.dart';
+import 'package:biguess_studio/data/dataset_search.dart';
 import 'package:biguess_studio/data/dataset_store.dart';
 import 'package:biguess_studio/data/studio_dataset.dart';
 import 'package:biguess_studio/data/topic_taxonomy.dart';
@@ -50,6 +51,8 @@ class TopicUiController extends ChangeNotifier implements DatasetController {
   @override
   List<TopicTaxonomy> get eligibleTopics =>
       entries.where((topic) => topic.eligible).toList();
+  @override
+  DatasetSearchIndex get searchIndex => DatasetSearchIndex.build(this);
   void _save() {
     if (failSave) throw const DatasetStorageFailure('quota-exceeded');
   }
