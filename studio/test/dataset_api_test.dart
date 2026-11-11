@@ -218,4 +218,140 @@ void main() {
       expect(calls, 2);
     },
   );
+
+  group('WorkerDatasetApi.commitBatch', () {
+    test(
+      'sends POST /studio/v1/batches with valid headers and parses result',
+      () async {
+        http.Request? captured;
+        final api = WorkerDatasetApi(
+          Uri.parse('https://api.example'),
+          MockClient((request) async {
+            captured = request;
+            return http.Response(
+              jsonEncode({
+                'protocolVersion': 1,
+                'aggregate': {'resourceType': 'pack', 'id': 'p1'},
+                'revision': 2,
+                'committedAt': '2026-11-11T00:00:00Z',
+                'actorId': 'user-1',
+              }),
+              200,
+            );
+          }),
+        );
+        addTearDown(api.close);
+
+        final batch = {
+          'protocolVersion': 1,
+          'aggregate': {'resourceType': 'pack', 'id': 'p1'},
+          'operations': [
+            {'resourceType': 'card', 'id': 'c1', 'action': 'create'},
+          ],
+        };
+
+        final result = await api.commitBatch(
+          'test-token',
+          idempotencyKey: 'key-123',
+          revision: 1,
+          batch: batch,
+          current: () => true,
+        );
+
+        expect(result.revision, 2);
+        expect(result.committedAt, '2026-11-11T00:00:00Z');
+        expect(result.actorId, 'user-1');
+        expect(captured!.method, 'POST');
+        expect(captured!.url.path, '/studio/v1/batches');
+        expect(captured!.headers['Authorization'], 'Bearer test-token');
+        expect(captured!.headers['Idempotency-Key'], 'key-123');
+        expect(captured!.headers['If-Match'], '"rev-1"');
+        expect(captured!.headers['Content-Type'], 'application/json');
+      },
+    );
+
+    test('maps status codes to DatasetApiFailure', () async {
+      for (final (status, code) in [
+        (401, 'session-expired'),
+        (403, 'forbidden'),
+        (412, 'draft-conflict'),
+        (409, 'idempotency-conflict'),
+        (429, 'rate-limited'),
+        (500, 'commit-unavailable'),
+      ]) {
+        final api = WorkerDatasetApi(
+          Uri.parse('https://api.example'),
+          MockClient((_) async => http.Response('{}', status)),
+        );
+        await expectLater(
+          api.commitBatch(
+            'token',
+            idempotencyKey: 'k',
+            revision: 1,
+            batch: const {},
+            current: () => true,
+          ),
+          throwsA(apiFailure(code)),
+        );
+        api.close();
+      }
+    });
+
+    test('rejects batch exceeding 256 KiB before transport', () async {
+      var called = false;
+      final api = WorkerDatasetApi(
+        Uri.parse('https://api.example'),
+        MockClient((_) async {
+          called = true;
+          return http.Response('{}', 200);
+        }),
+      );
+      addTearDown(api.close);
+
+      final hugeBatch = {
+        'protocolVersion': 1,
+        'aggregate': {'resourceType': 'pack', 'id': 'p1'},
+        'operations': List.generate(
+          1000,
+          (i) => {'resourceType': 'card', 'id': 'c$i', 'padding': 'x' * 300},
+        ),
+      };
+
+      await expectLater(
+        api.commitBatch(
+          'token',
+          idempotencyKey: 'k',
+          revision: 1,
+          batch: hugeBatch,
+          current: () => true,
+        ),
+        throwsA(apiFailure('batch-too-large')),
+      );
+      expect(called, isFalse);
+    });
+
+    test('cancelled check stops before transport', () async {
+      var called = false;
+      final api = WorkerDatasetApi(
+        Uri.parse('https://api.example'),
+        MockClient((_) async {
+          called = true;
+          return http.Response('{}', 200);
+        }),
+      );
+      addTearDown(api.close);
+
+      await expectLater(
+        api.commitBatch(
+          'token',
+          idempotencyKey: 'k',
+          revision: 1,
+          batch: const {},
+          current: () => false,
+        ),
+        throwsA(apiFailure('cancelled')),
+      );
+      expect(called, isFalse);
+    });
+  });
 }

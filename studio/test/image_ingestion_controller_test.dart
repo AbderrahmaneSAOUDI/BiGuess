@@ -49,6 +49,18 @@ class _DatasetApi implements DatasetApi {
   Future<InitialDataset> initial(String token, bool Function() current) async =>
       InitialDataset(records(token.substring('token-'.length)), 'resume');
   @override
+  Future<BatchCommitResult> commitBatch(
+    String token, {
+    required String idempotencyKey,
+    required int revision,
+    required Map<String, Object?> batch,
+    required bool Function() current,
+  }) async => BatchCommitResult(
+    revision: revision + 1,
+    committedAt: DateTime.now().toIso8601String(),
+    actorId: token.split('-').last,
+  );
+  @override
   void close() {}
 }
 

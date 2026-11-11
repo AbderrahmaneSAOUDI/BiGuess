@@ -14,6 +14,7 @@ import 'offline_access_policy.dart';
 import 'topic_taxonomy.dart';
 import 'pack_summary.dart';
 import 'image_ingestion.dart';
+import 'bulk_card_import.dart';
 
 enum DatasetPhase { idle, loading, ready, offline, error, denied }
 
@@ -491,6 +492,17 @@ class DatasetController extends ChangeNotifier {
   String _newId(String kind) {
     final random = Random.secure();
     return 'studio-$kind-${List.generate(16, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join()}';
+  }
+
+  String newCardId() => _newId('card');
+
+  String _uuidV4() {
+    final random = Random.secure();
+    final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    final hex = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+    return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20, 32)}';
   }
 
   Future<void> createTopic(String name) async {
@@ -1321,6 +1333,343 @@ class DatasetController extends ChangeNotifier {
         cancelImageUpload();
       }
     }
+  }
+
+  Future<void> saveBulkCardDrafts({
+    required String packId,
+    required List<BulkImportItem> items,
+  }) async {
+    final current = _workingSnapshot();
+    if (!eligibleCardPacks.any((p) => p.id == packId)) {
+      throw const DatasetStorageFailure('pack-not-eligible');
+    }
+    final drafts = <LocalDraft>[];
+    for (final item in items) {
+      if (!item.isValid) continue;
+      final draft = LocalDraft(
+        id: jsonEncode(['card', item.id]),
+        resourceType: 'card',
+        resourceId: item.id,
+        action: 'create',
+        value: {
+          'name': _name(item.name),
+          'imageReference': item.uploadedImage?.imageReference,
+          'difficulty': item.difficulty,
+          'packId': packId,
+        },
+        localImage: item.image,
+        uploadedImage: item.uploadedImage,
+      );
+      _validateCardOperation(draft);
+      drafts.add(draft);
+    }
+    if (drafts.isEmpty) return;
+    final draftIds = drafts.map((d) => d.id).toSet();
+    final retained = current.drafts
+        .where((d) => !draftIds.contains(d.id))
+        .toList();
+    await _saveDrafts([...retained, ...drafts]);
+  }
+
+  Future<BulkImportResult> importAndCommitBulkCards({
+    required String packId,
+    required List<BulkImportItem> items,
+    void Function(BulkImportProgress)? onProgress,
+    Future<void>? cancelled,
+  }) async {
+    final validItems = items.where((item) => item.isValid).toList();
+    if (validItems.isEmpty) {
+      throw const DatasetStorageFailure('invalid-card');
+    }
+    final current = _workingSnapshot();
+    if (!eligibleCardPacks.any((p) => p.id == packId)) {
+      throw const DatasetStorageFailure('pack-not-eligible');
+    }
+    final packRecord = current.records
+        .where((r) => r['resourceType'] == 'pack' && r['id'] == packId)
+        .firstOrNull;
+    if (packRecord == null) {
+      throw const DatasetStorageFailure('pack-not-eligible');
+    }
+    final target = scope!;
+    final epoch = _epoch;
+    final token = session.tokenFor(target.uid, target.role);
+    if (token == null) {
+      throw const DatasetStorageFailure('image-upload-unavailable');
+    }
+    bool isCancelled = false;
+    unawaited(cancelled?.then((_) => isCancelled = true));
+    bool active() => _current(epoch) && !isCancelled && canUploadImages;
+
+    int currentRevision = packRecord['revision']! as int;
+
+    // Stage 1: Upload images
+    for (var i = 0; i < validItems.length; i++) {
+      if (!active()) throw const DatasetApiFailure('cancelled');
+      final item = validItems[i];
+      if (item.uploadedImage == null) {
+        onProgress?.call(
+          BulkImportProgress(
+            stage: 'uploading',
+            current: i + 1,
+            total: validItems.length,
+            detail: item.name,
+          ),
+        );
+        final abortCompleter = Completer<void>();
+        unawaited(
+          cancelled?.then((_) {
+            if (!abortCompleter.isCompleted) abortCompleter.complete();
+          }),
+        );
+        try {
+          final receipt = await imageIngestion!.upload(
+            token,
+            packId,
+            currentRevision,
+            item.image,
+            active,
+            cancelled: abortCompleter.future,
+          );
+          item.uploadedImage = receipt;
+        } catch (error) {
+          final code = _code(error);
+          if (active() && {'session-expired', 'forbidden'}.contains(code)) {
+            session.rejectAuthorization(code);
+          }
+          throw DatasetStorageFailure(code);
+        }
+      }
+    }
+
+    // Stage 2: Chunk into batches of up to 100 operations and commit
+    const maxOpsPerBatch = 100;
+    final chunks = <List<BulkImportItem>>[];
+    var currentChunk = <BulkImportItem>[];
+    for (final item in validItems) {
+      currentChunk.add(item);
+      if (currentChunk.length >= maxOpsPerBatch) {
+        chunks.add(currentChunk);
+        currentChunk = [];
+      }
+    }
+    if (currentChunk.isNotEmpty) {
+      chunks.add(currentChunk);
+    }
+
+    var batchCount = 0;
+    for (var i = 0; i < chunks.length; i++) {
+      if (!active()) throw const DatasetApiFailure('cancelled');
+      final chunk = chunks[i];
+      onProgress?.call(
+        BulkImportProgress(
+          stage: 'committing',
+          current: i + 1,
+          total: chunks.length,
+        ),
+      );
+
+      final idempotencyKey = _uuidV4();
+      final batch = {
+        'protocolVersion': 1,
+        'aggregate': {'resourceType': 'pack', 'id': packId},
+        'operations': [
+          for (final item in chunk)
+            {
+              'resourceType': 'card',
+              'id': item.id,
+              'action': 'create',
+              'value': {
+                'name': _name(item.name),
+                'packId': packId,
+                'imageReference': item.uploadedImage!.imageReference,
+                'difficulty': item.difficulty,
+              },
+            },
+        ],
+      };
+
+      try {
+        final result = await api.commitBatch(
+          token,
+          idempotencyKey: idempotencyKey,
+          revision: currentRevision,
+          batch: batch,
+          current: active,
+        );
+
+        currentRevision = result.revision;
+        batchCount++;
+
+        // Update local snapshot with newly committed cards and updated pack revision
+        final latest = _workingSnapshot();
+        final updatedRecords = latest.records.map((r) {
+          if (r['resourceType'] == 'pack' && r['id'] == packId) {
+            final updated = Map<String, Object?>.from(r);
+            updated['revision'] = currentRevision;
+            return Map<String, Object?>.unmodifiable(updated);
+          }
+          return r;
+        }).toList();
+
+        for (final item in chunk) {
+          updatedRecords.add(
+            Map<String, Object?>.unmodifiable({
+              'resourceType': 'card',
+              'id': item.id,
+              'name': _name(item.name),
+              'packId': packId,
+              'imageReference': item.uploadedImage!.imageReference,
+              'difficulty': item.difficulty,
+              'state': 'active',
+              'revision': currentRevision,
+              'createdByUid': result.actorId,
+              'createdAt': result.committedAt,
+            }),
+          );
+        }
+
+        // Remove any drafts for these committed cards
+        final chunkIds = chunk.map((item) => item.id).toSet();
+        final remainingDrafts = latest.drafts
+            .where(
+              (d) =>
+                  !(d.resourceType == 'card' &&
+                      chunkIds.contains(d.resourceId)),
+            )
+            .toList();
+
+        final updatedSnapshot = latest.copyWith(
+          records: updatedRecords,
+          drafts: remainingDrafts,
+        );
+
+        final saved = await _store?.save(
+          updatedSnapshot,
+          expectedVersion: latest.version,
+        );
+        snapshot = saved ?? updatedSnapshot;
+        _notify();
+      } catch (error) {
+        final code = _code(error);
+        if (active() && {'session-expired', 'forbidden'}.contains(code)) {
+          session.rejectAuthorization(code);
+        }
+        throw DatasetStorageFailure(code);
+      }
+    }
+
+    return BulkImportResult(
+      committedCount: validItems.length,
+      batchCount: batchCount,
+      finalRevision: currentRevision,
+    );
+  }
+
+  Future<void> bulkHideCards(List<String> cardIds) async {
+    if (cardIds.isEmpty) return;
+    final current = _workingSnapshot();
+    final newDrafts = <LocalDraft>[];
+    for (final id in cardIds) {
+      if (current.drafts.any(
+        (d) => d.resourceType == 'card' && d.resourceId == id,
+      )) {
+        throw const DatasetStorageFailure('card-pending-change');
+      }
+      final record = current.records
+          .where((r) => r['resourceType'] == 'card' && r['id'] == id)
+          .firstOrNull;
+      if (record == null || record['state'] != 'active') {
+        throw const DatasetStorageFailure('invalid-card-state');
+      }
+      final draft = LocalDraft(
+        id: jsonEncode(['card', id]),
+        resourceType: 'card',
+        resourceId: id,
+        action: 'hide',
+        baseRevision: record['revision']! as int,
+        value: _cardValue(record),
+      );
+      _validateCardOperation(draft);
+      newDrafts.add(draft);
+    }
+    await _saveDrafts([...current.drafts, ...newDrafts]);
+  }
+
+  Future<void> bulkUpdateDifficulty(
+    List<String> cardIds,
+    int newDifficulty,
+  ) async {
+    if (cardIds.isEmpty) return;
+    if (![1, 2, 3].contains(newDifficulty)) {
+      throw const DatasetStorageFailure('invalid-card');
+    }
+    final current = _workingSnapshot();
+    final newDrafts = <LocalDraft>[];
+    final existingDraftIds = <String>{};
+    for (final id in cardIds) {
+      final record = current.records
+          .where((r) => r['resourceType'] == 'card' && r['id'] == id)
+          .firstOrNull;
+      if (record == null) {
+        throw const DatasetStorageFailure('invalid-card-state');
+      }
+      final existing = current.drafts
+          .where((d) => d.resourceType == 'card' && d.resourceId == id)
+          .firstOrNull;
+      if (existing != null) {
+        if (existing.action != 'update' ||
+            existing.status == DraftStatus.conflict) {
+          throw const DatasetStorageFailure('card-pending-change');
+        }
+        existingDraftIds.add(existing.id);
+      }
+      final draft = LocalDraft(
+        id: jsonEncode(['card', id]),
+        resourceType: 'card',
+        resourceId: id,
+        baseRevision: existing?.baseRevision ?? record['revision']! as int,
+        value: _cardValue(existing?.value ?? record, difficulty: newDifficulty),
+        localImage: existing?.localImage,
+        uploadedImage: existing?.uploadedImage,
+      );
+      _validateCardOperation(draft);
+      newDrafts.add(draft);
+    }
+    final retainedDrafts = current.drafts
+        .where((d) => !existingDraftIds.contains(d.id))
+        .toList();
+    await _saveDrafts([...retainedDrafts, ...newDrafts]);
+  }
+
+  Future<void> bulkDeleteCards(List<String> cardIds) async {
+    if (cardIds.isEmpty) return;
+    final current = _workingSnapshot(owner: true);
+    final newDrafts = <LocalDraft>[];
+    for (final id in cardIds) {
+      if (current.drafts.any(
+        (d) => d.resourceType == 'card' && d.resourceId == id,
+      )) {
+        throw const DatasetStorageFailure('card-pending-change');
+      }
+      final record = current.records
+          .where((r) => r['resourceType'] == 'card' && r['id'] == id)
+          .firstOrNull;
+      if (record == null) {
+        throw const DatasetStorageFailure('invalid-card-state');
+      }
+      final draft = LocalDraft(
+        id: jsonEncode(['card', id]),
+        resourceType: 'card',
+        resourceId: id,
+        action: 'softDelete',
+        baseRevision: record['revision']! as int,
+        value: _cardValue(record),
+      );
+      _validateCardOperation(draft);
+      newDrafts.add(draft);
+    }
+    await _saveDrafts([...current.drafts, ...newDrafts]);
   }
 
   Future<void> _cardAction(

@@ -78,6 +78,14 @@ class _RevokeFailure implements DatasetStore {
 
 class _Api implements DatasetApi {
   Future<InitialDataset> Function(String, bool Function())? handler;
+  Future<BatchCommitResult> Function(
+    String,
+    String,
+    int,
+    Map<String, Object?>,
+    bool Function(),
+  )?
+  batchHandler;
   int calls = 0;
   final tokens = <String>[];
   bool closed = false;
@@ -90,6 +98,24 @@ class _Api implements DatasetApi {
           records(token.endsWith('b') ? 'b' : 'a'),
           'opaque-resume',
         );
+  }
+
+  @override
+  Future<BatchCommitResult> commitBatch(
+    String token, {
+    required String idempotencyKey,
+    required int revision,
+    required Map<String, Object?> batch,
+    required bool Function() current,
+  }) async {
+    if (batchHandler != null) {
+      return batchHandler!(token, idempotencyKey, revision, batch, current);
+    }
+    return BatchCommitResult(
+      revision: revision + 1,
+      committedAt: DateTime.now().toIso8601String(),
+      actorId: token.split('-').last,
+    );
   }
 
   @override

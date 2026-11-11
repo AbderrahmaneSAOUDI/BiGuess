@@ -19,5 +19,8 @@ String cardFailureMessage(
   'image-upload-busy' => 'Other private image uploads are in progress. Your local image is retained; retry shortly.',
   'image-too-large' || 'image-rejected' || 'invalid-image-receipt' => 'The server could not validate this prepared image. Your local image is retained; select it again or contact the Owner.',
   'cancelled' => 'Image upload cancelled. Your local draft is retained.',
+  'batch-too-large' =>
+    'The batch payload exceeds 256 KiB. Reduce the batch size.',
+  'commit-unavailable' => 'Could not commit the batch to the server. Your prepared items are retained; retry.',
   _ => 'Could not save locally. Your inputs and last saved data are retained; check browser storage and retry.',
 };

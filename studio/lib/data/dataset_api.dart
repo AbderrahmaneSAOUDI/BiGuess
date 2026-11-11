@@ -13,8 +13,26 @@ class InitialDataset {
   final String resumeCursor;
 }
 
+class BatchCommitResult {
+  const BatchCommitResult({
+    required this.revision,
+    required this.committedAt,
+    required this.actorId,
+  });
+  final int revision;
+  final String committedAt;
+  final String actorId;
+}
+
 abstract interface class DatasetApi {
   Future<InitialDataset> initial(String token, bool Function() current);
+  Future<BatchCommitResult> commitBatch(
+    String token, {
+    required String idempotencyKey,
+    required int revision,
+    required Map<String, Object?> batch,
+    required bool Function() current,
+  });
   void close();
 }
 
@@ -96,6 +114,71 @@ class WorkerDatasetApi implements DatasetApi {
       } on TypeError {
         throw const DatasetApiFailure('invalid-dataset');
       }
+    }
+  }
+
+  @override
+  Future<BatchCommitResult> commitBatch(
+    String token, {
+    required String idempotencyKey,
+    required int revision,
+    required Map<String, Object?> batch,
+    required bool Function() current,
+  }) async {
+    if (!current()) throw const DatasetApiFailure('cancelled');
+    final uri = base.resolve('/studio/v1/batches');
+    final body = jsonEncode(batch);
+    if (utf8.encode(body).length > 262144) {
+      throw const DatasetApiFailure('batch-too-large');
+    }
+    final response = await client
+        .post(
+          uri,
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+            'Idempotency-Key': idempotencyKey,
+            'If-Match': '"rev-$revision"',
+          },
+          body: body,
+        )
+        .timeout(const Duration(seconds: 30));
+    if (!current()) throw const DatasetApiFailure('cancelled');
+    if (response.statusCode == 401) {
+      throw const DatasetApiFailure('session-expired');
+    }
+    if (response.statusCode == 403) {
+      throw const DatasetApiFailure('forbidden');
+    }
+    if (response.statusCode == 412) {
+      throw const DatasetApiFailure('draft-conflict');
+    }
+    if (response.statusCode == 409) {
+      throw const DatasetApiFailure('idempotency-conflict');
+    }
+    if (response.statusCode == 429) {
+      throw const DatasetApiFailure('rate-limited');
+    }
+    if (response.statusCode != 200) {
+      throw const DatasetApiFailure('commit-unavailable');
+    }
+    try {
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      if (data['protocolVersion'] != 1 ||
+          data['revision'] is! int ||
+          data['committedAt'] is! String ||
+          data['actorId'] is! String) {
+        throw const FormatException();
+      }
+      return BatchCommitResult(
+        revision: data['revision'] as int,
+        committedAt: data['committedAt'] as String,
+        actorId: data['actorId'] as String,
+      );
+    } on FormatException {
+      throw const DatasetApiFailure('invalid-dataset');
+    } on TypeError {
+      throw const DatasetApiFailure('invalid-dataset');
     }
   }
 

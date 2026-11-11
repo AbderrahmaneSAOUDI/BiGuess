@@ -8,6 +8,7 @@ import '../data/studio_dataset.dart';
 import 'card_draft_dialog.dart';
 import 'card_messages.dart';
 import 'image_preparation_page.dart';
+import 'bulk_card_import_page.dart';
 
 class CardsPage extends StatefulWidget {
   const CardsPage({super.key, required this.controller, this.initialPackId});
@@ -19,6 +20,7 @@ class CardsPage extends StatefulWidget {
 
 class _CardsPageState extends State<CardsPage> {
   final _search = TextEditingController();
+  final _selectedCardIds = <String>{};
   String? _packId;
   String? _scope;
   @override
@@ -44,6 +46,7 @@ class _CardsPageState extends State<CardsPage> {
     if (_scope != widget.controller.scope?.namespace) {
       _scope = widget.controller.scope?.namespace;
       _search.clear();
+      _selectedCardIds.clear();
       _packId = null;
     }
     setState(() {});
@@ -54,6 +57,101 @@ class _CardsPageState extends State<CardsPage> {
     widget.controller.removeListener(_changed);
     _search.dispose();
     super.dispose();
+  }
+
+  Future<void> _bulkHide(
+    BuildContext context,
+    DatasetController controller,
+  ) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final selected = _selectedCardIds.toList();
+    try {
+      await controller.bulkHideCards(selected);
+      if (mounted) {
+        setState(() => _selectedCardIds.clear());
+      }
+    } catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(content: Text(cardFailureMessage(e))));
+      }
+    }
+  }
+
+  Future<void> _bulkDifficulty(
+    BuildContext context,
+    DatasetController controller,
+  ) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final selected = _selectedCardIds.toList();
+    final diff = await showDialog<int>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: Text('Set difficulty for ${selected.length} Cards'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(dialogContext, 1),
+            child: const Text('1 (Easy)'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(dialogContext, 2),
+            child: const Text('2 (Medium)'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(dialogContext, 3),
+            child: const Text('3 (Hard)'),
+          ),
+        ],
+      ),
+    );
+    if (diff == null || !mounted) return;
+    try {
+      await controller.bulkUpdateDifficulty(selected, diff);
+      if (mounted) {
+        setState(() => _selectedCardIds.clear());
+      }
+    } catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(content: Text(cardFailureMessage(e))));
+      }
+    }
+  }
+
+  Future<void> _bulkDelete(
+    BuildContext context,
+    DatasetController controller,
+  ) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final selected = _selectedCardIds.toList();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete selected Cards'),
+        content: Text(
+          'Are you sure you want to soft-delete ${selected.length} Cards?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await controller.bulkDeleteCards(selected);
+      if (mounted) {
+        setState(() => _selectedCardIds.clear());
+      }
+    } catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(content: Text(cardFailureMessage(e))));
+      }
+    }
   }
 
   @override
@@ -108,6 +206,7 @@ class _CardsPageState extends State<CardsPage> {
             ],
             onChanged: (value) => setState(() {
               _packId = value;
+              _selectedCardIds.clear();
               _search.clear();
             }),
           ),
@@ -118,29 +217,42 @@ class _CardsPageState extends State<CardsPage> {
             Text(
               'Pack creator: ${selected.createdByUid ?? 'Unassigned legacy draft'}',
             ),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: FilledButton.tonal(
-              onPressed: !eligible
-                  ? null
-                  : () => showDialog<void>(
-                      context: context,
-                      builder: (_) => CardDraftDialog(
-                        controller: controller,
-                        packId: _packId!,
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilledButton.tonal(
+                onPressed: !eligible
+                    ? null
+                    : () => showDialog<void>(
+                        context: context,
+                        builder: (_) => CardDraftDialog(
+                          controller: controller,
+                          packId: _packId!,
+                        ),
                       ),
-                    ),
-              child: const Text('New Card'),
-            ),
-          ),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: OutlinedButton(
-              onPressed: !eligible
-                  ? null
-                  : () => showImagePreparation(context, controller, _packId!),
-              child: const Text('Prepare images'),
-            ),
+                child: const Text('New Card'),
+              ),
+              FilledButton.tonal(
+                onPressed: !eligible
+                    ? null
+                    : () => showBulkCardImport(context, controller, _packId!),
+                child: const Text('Bulk import Cards'),
+              ),
+              OutlinedButton(
+                onPressed: !eligible
+                    ? null
+                    : () => showImagePreparation(context, controller, _packId!),
+                child: const Text('Prepare images'),
+              ),
+              if (cards.isNotEmpty && _selectedCardIds.isEmpty)
+                TextButton(
+                  onPressed: () => setState(
+                    () => _selectedCardIds.addAll(cards.map((c) => c.id)),
+                  ),
+                  child: const Text('Select all'),
+                ),
+            ],
           ),
           if (!eligible)
             const Text(
@@ -156,7 +268,64 @@ class _CardsPageState extends State<CardsPage> {
             onChanged: (_) => setState(() {}),
           ),
           const SizedBox(height: 12),
-          if (cards.isEmpty) const Text('No Cards match this Pack view.'),
+          if (cards.isEmpty)
+            const Text('No Cards match this Pack view.')
+          else if (_selectedCardIds.isNotEmpty)
+            Card(
+              color: Theme.of(context).colorScheme.surfaceContainerLow,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                child: Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 12,
+                  runSpacing: 8,
+                  children: [
+                    Text(
+                      '${_selectedCardIds.length} of ${cards.length} selected',
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        setState(() {
+                          if (_selectedCardIds.length == cards.length) {
+                            _selectedCardIds.clear();
+                          } else {
+                            _selectedCardIds.addAll(cards.map((c) => c.id));
+                          }
+                        });
+                      },
+                      child: Text(
+                        _selectedCardIds.length == cards.length
+                            ? 'Deselect all'
+                            : 'Select all',
+                      ),
+                    ),
+                    TextButton.icon(
+                      icon: const Icon(Icons.visibility_off, size: 18),
+                      label: const Text('Hide selected'),
+                      onPressed: !eligible
+                          ? null
+                          : () => _bulkHide(context, controller),
+                    ),
+                    TextButton.icon(
+                      icon: const Icon(Icons.tune, size: 18),
+                      label: const Text('Change difficulty'),
+                      onPressed: !eligible
+                          ? null
+                          : () => _bulkDifficulty(context, controller),
+                    ),
+                    if (owner)
+                      TextButton.icon(
+                        icon: const Icon(Icons.delete_outline, size: 18),
+                        label: const Text('Delete selected'),
+                        onPressed: () => _bulkDelete(context, controller),
+                      ),
+                  ],
+                ),
+              ),
+            ),
           for (final card in cards)
             Card(
               child: Padding(
@@ -164,9 +333,31 @@ class _CardsPageState extends State<CardsPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text(
-                      card.name,
-                      style: Theme.of(context).textTheme.titleMedium,
+                    Row(
+                      children: [
+                        Checkbox(
+                          visualDensity: VisualDensity.compact,
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
+                          value: _selectedCardIds.contains(card.id),
+                          onChanged: (val) {
+                            setState(() {
+                              if (val == true) {
+                                _selectedCardIds.add(card.id);
+                              } else {
+                                _selectedCardIds.remove(card.id);
+                              }
+                            });
+                          },
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            card.name,
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                        ),
+                      ],
                     ),
                     Text('Card ID: ${card.id}'),
                     Text('Pack: ${card.packId}'),
