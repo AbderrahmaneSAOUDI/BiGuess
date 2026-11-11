@@ -12,6 +12,7 @@ import 'data/dataset_api.dart';
 import 'data/dataset_controller.dart';
 import 'data/network_state.dart';
 import 'data/image_ingestion.dart';
+import 'data/publication_api.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -56,6 +57,10 @@ Future<void> main() async {
             projectId: projectId,
             session: session,
             api: WorkerDatasetApi(Uri.parse(apiBase), http.Client()),
+            publication: WorkerPublicationApi(
+              Uri.parse(apiBase),
+              http.Client(),
+            ),
             imageIngestion: WorkerImageIngestionApi(
               Uri.parse(apiBase),
               http.Client(),

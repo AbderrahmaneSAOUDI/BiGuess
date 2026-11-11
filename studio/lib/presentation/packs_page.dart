@@ -8,6 +8,7 @@ import '../data/pack_summary.dart';
 import '../data/studio_dataset.dart';
 import 'pack_draft_dialog.dart';
 import 'cards_page.dart';
+import 'publication_review_dialog.dart';
 
 class PacksPage extends StatefulWidget {
   const PacksPage({super.key, required this.controller});
@@ -211,6 +212,19 @@ class _PacksPageState extends State<PacksPage> {
                       spacing: 12,
                       runSpacing: 4,
                       children: [
+                        if ({'active', 'hidden'}.contains(pack.state) &&
+                            pack.revision > 0)
+                          TextButton(
+                            onPressed: controller.phase == DatasetPhase.ready
+                                ? () => showPublicationReview(
+                                    context,
+                                    controller,
+                                    'pack',
+                                    pack.id,
+                                  )
+                                : null,
+                            child: const Text('Review publication'),
+                          ),
                         if ({'active', 'hidden'}.contains(pack.state))
                           TextButton(
                             onPressed: () => _edit(context, pack),

@@ -3,7 +3,7 @@
 T22 builds on the T21 catalog migration (`0002_catalog.sql`). Apply additive
 `0003_publications.sql`, `0004_studio.sql`, and `0005_distribution.sql` in order. No cloud migration or deployment is performed
 by preparation or tests. There is no public publishing HTTP route. Studio
-publishing/rights approval and mobile download installation remain later tickets.
+publishing/rights approval is described in [PUBLICATION-REVIEW.md](PUBLICATION-REVIEW.md); mobile download installation remains a later ticket.
 
 ## Prepare and trust an artifact
 

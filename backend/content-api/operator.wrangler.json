@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "biguess-publication-operator-unconfigured",
+  "main": "src/publication-operator.ts",
+  "compatibility_date": "2026-11-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": { "APP_ENV": "staging" },
+  "d1_databases": [{
+    "binding": "DB", "database_name": "biguess-content-unconfigured",
+    "database_id": "00000000-0000-0000-0000-000000000002",
+    "migrations_dir": "migrations", "remote": false
+  }],
+  "r2_buckets": [{ "binding": "CONTENT", "bucket_name": "biguess-content-unconfigured", "remote": false }]
+}

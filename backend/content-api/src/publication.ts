@@ -230,7 +230,7 @@ async function administrativeProjection(env: Env, manifest: Manifest, s: Stateme
 }
 
 /** Trusted-operator primitive only; Studio approval/publishing is a separate T35 boundary. */
-export async function publish(env: Env, bundle: Bundle, expectedRevision: number): Promise<void> {
+export async function publish(env: Env, bundle: Bundle, expectedRevision: number, workflow?: { before: D1PreparedStatement[]; after: D1PreparedStatement[] }): Promise<void> {
   await verifyReceipt(env, bundle.receipt);
   require(Number.isSafeInteger(expectedRevision) && expectedRevision >= 0);
   const s = bundle.receipt.statement;
@@ -255,6 +255,7 @@ export async function publish(env: Env, bundle: Bundle, expectedRevision: number
   const receipt = JSON.stringify(bundle.receipt);
   // Transaction + SQL trigger enforce CAS and swap current/previous atomically.
   await env.DB.batch([
+    ...(workflow?.before ?? []),
     ...administrative.statements,
     env.DB.prepare('INSERT INTO publication_topics (topic_id) VALUES (?) ON CONFLICT DO NOTHING').bind(s.topicId),
     env.DB.prepare('INSERT INTO publication_revisions VALUES (?, ?, ?, ?, ?)')
@@ -270,6 +271,7 @@ export async function publish(env: Env, bundle: Bundle, expectedRevision: number
     env.DB.prepare('UPDATE catalog_packs SET published = 1 WHERE id = ? AND deleted = 0 AND ? = 1')
       .bind(s.packId, Number(administrative.resumePublished)),
     env.DB.prepare('DELETE FROM publication_suppression WHERE pack_id = ?').bind(s.packId),
+    ...(workflow?.after ?? []),
   ]);
 }
 

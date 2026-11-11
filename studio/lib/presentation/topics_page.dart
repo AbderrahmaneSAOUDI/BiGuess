@@ -6,6 +6,7 @@ import '../data/dataset_controller.dart';
 import '../data/dataset_store.dart';
 import '../data/studio_dataset.dart';
 import '../data/topic_taxonomy.dart';
+import 'publication_review_dialog.dart';
 
 class TopicsPage extends StatefulWidget {
   const TopicsPage({super.key, required this.controller});
@@ -173,6 +174,19 @@ class _TopicsPageState extends State<TopicsPage> {
                       spacing: 12,
                       runSpacing: 4,
                       children: [
+                        if ({'active', 'hidden'}.contains(topic.state) &&
+                            topic.revision > 0)
+                          TextButton(
+                            onPressed: controller.phase == DatasetPhase.ready
+                                ? () => showPublicationReview(
+                                    context,
+                                    controller,
+                                    'topic',
+                                    topic.id,
+                                  )
+                                : null,
+                            child: const Text('Review publication'),
+                          ),
                         if ({'active', 'hidden'}.contains(topic.state))
                           TextButton(
                             onPressed: () =>

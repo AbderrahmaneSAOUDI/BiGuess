@@ -16,6 +16,7 @@ import 'pack_summary.dart';
 import 'image_ingestion.dart';
 import 'bulk_card_import.dart';
 import 'dataset_search.dart';
+import 'publication_api.dart';
 
 enum DatasetPhase { idle, loading, ready, offline, error, denied }
 
@@ -28,11 +29,13 @@ class DatasetController extends ChangeNotifier {
     required this.api,
     this.storeFactory = createDatasetStore,
     this.imageIngestion,
+    this.publication,
   });
   final String projectId;
   final StudioSession session;
   final DatasetApi api;
   final ImageIngestionApi? imageIngestion;
+  final PublicationApi? publication;
   String? uploadingImageDraftId;
   Completer<void>? _imageUploadCancellation;
   bool get canUploadImages =>
@@ -1343,6 +1346,93 @@ class DatasetController extends ChangeNotifier {
     }
   }
 
+  /// Every review/action rechecks the live account. Pending browser edits cannot
+  /// be mistaken for the committed revision being approved or distributed.
+  Future<PublicationReview> reviewPublication(
+    String resourceType,
+    String id, {
+    String? action,
+    PublicationReview? expected,
+    String? evidence,
+  }) async {
+    final current = _workingSnapshot(owner: resourceType == 'topic');
+    if (publication == null ||
+        phase != DatasetPhase.ready ||
+        session.phase != SessionPhase.authorized) {
+      throw const DatasetStorageFailure('publication-offline');
+    }
+    if (!{'topic', 'pack'}.contains(resourceType)) {
+      throw const DatasetStorageFailure('invalid-publication-action');
+    }
+    final record = current.records
+        .where((r) => r['resourceType'] == resourceType && r['id'] == id)
+        .firstOrNull;
+    if (record == null || !{'active', 'hidden'}.contains(record['state'])) {
+      throw const DatasetStorageFailure('publication-unavailable');
+    }
+    bool pending(DatasetSnapshot value) => value.drafts.any((draft) {
+      if (draft.resourceType == resourceType && draft.resourceId == id) {
+        return true;
+      }
+      final stored = value.records
+          .where(
+            (r) =>
+                r['resourceType'] == draft.resourceType &&
+                r['id'] == draft.resourceId,
+          )
+          .firstOrNull;
+      final packId = draft.resourceType == 'pack'
+          ? draft.resourceId
+          : draft.value['packId'] ?? stored?['packId'];
+      if (resourceType == 'pack') return packId == id;
+      if (draft.value['topicId'] == id || stored?['topicId'] == id) return true;
+      return value.records.any(
+        (r) =>
+            r['resourceType'] == 'pack' &&
+            r['id'] == packId &&
+            r['topicId'] == id,
+      );
+    });
+    if (pending(current)) {
+      throw const DatasetStorageFailure('publication-pending-changes');
+    }
+    final target = scope!;
+    final epoch = _epoch;
+    final token = session.tokenFor(target.uid, target.role);
+    if (token == null) throw const DatasetStorageFailure('publication-offline');
+    bool active() =>
+        _current(epoch) &&
+        phase == DatasetPhase.ready &&
+        session.phase == SessionPhase.authorized &&
+        snapshot != null &&
+        !pending(snapshot!);
+    try {
+      final principal = await session.authorization.lookup(token);
+      if (!active()) throw const DatasetApiFailure('cancelled');
+      if (principal.uid != target.uid || principal.role != target.role) {
+        session.rejectAuthorization('scope-changed');
+        throw const DatasetApiFailure('cancelled');
+      }
+      final result = await publication!.review(
+        token,
+        resourceType,
+        id,
+        active,
+        action: action,
+        expected: expected,
+        evidence: evidence,
+      );
+      if (!active()) throw const DatasetApiFailure('cancelled');
+      return result;
+    } catch (error) {
+      final code = _code(error);
+      if (active() && {'session-expired', 'forbidden'}.contains(code)) {
+        session.rejectAuthorization(code);
+      }
+      throw DatasetStorageFailure(code);
+    }
+  }
+
   Future<void> saveBulkCardDrafts({
     required String packId,
     required List<BulkImportItem> items,
@@ -1823,6 +1913,7 @@ class DatasetController extends ChangeNotifier {
     _store?.close();
     api.close();
     imageIngestion?.close();
+    publication?.close();
     super.dispose();
   }
 }
