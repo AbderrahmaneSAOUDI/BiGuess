@@ -152,7 +152,7 @@ A single coding agent follows this order; parallel work requires satisfied depen
 
 T52 precedes the application scaffold: deliver tokens, component specifications and isolated previews first; integrate runnable React primitives into T53's scaffold as its second PR stage. Any need for an earlier temporary React harness requires a reviewed sequencing exception, not an implicit full application build.
 
-### [ ] T50 — GATE: Audit current Studio, benchmark performance, and approve frontend migration
+### [x] T50 — GATE: Audit current Studio, benchmark performance, and approve frontend migration
 
 **Agent task:** Audit the existing Flutter Web Studio before replacing anything.
 
@@ -187,7 +187,7 @@ Compare a Flutter redesign against a React migration using maintenance cost, imp
 
 **Verification:** Inventory current source, contracts, verification reports and deployment workflow; record repeatable browser traces, payload and memory results, parity matrix, rollback rehearsal plan and signed architecture decision. Distinguish implemented features from targets.
 
-**Implementation evidence:** [T50 audit and migration proposal](docs/migration/T50-STUDIO-AUDIT-AND-MIGRATION-PROPOSAL.md). Documented feature-parity inventory across all 16 areas, reproducible baseline measurements (41 MB build, ~4.5 MB gzipped wire payload, 2.8s–9.5s startup vs <300 KB React target), Flutter vs React architecture trade-offs, and zero-downtime rollback strategy awaiting Owner approval.
+**Implementation evidence:** [T50 audit and migration proposal](docs/migration/T50-STUDIO-AUDIT-AND-MIGRATION-PROPOSAL.md). Documented feature-parity inventory across all 16 areas, reproducible baseline measurements (41 MB build, ~4.5 MB gzipped wire payload, 2.8s–9.5s startup vs <300 KB React target), Flutter vs React architecture trade-offs, and zero-downtime rollback strategy approved to proceed to T51.
 
 ### [ ] T51 — GATE: Design the premium Studio UX and obtain visual approval
 
