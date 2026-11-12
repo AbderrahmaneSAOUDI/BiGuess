@@ -30,7 +30,7 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install Python dependencies for test fixtures
-        run: pip install Pillow
+        run: pip install Pillow -r ../../contracts/content/requirements.txt
       - run: npm ci
       - run: npm run typecheck
       # npm test builds only with Wrangler --dry-run, then uses isolated local

@@ -122,8 +122,18 @@ void main() {
   });
   tearDown(() async {
     container.dispose();
-    runtime.close();
-    await directory.delete(recursive: true);
+    await runtime.releasePlayback();
+    await runtime.close();
+    if (await directory.exists()) {
+      try {
+        await directory.delete(recursive: true);
+      } on FileSystemException {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        if (await directory.exists()) {
+          await directory.delete(recursive: true);
+        }
+      }
+    }
   });
 
   test(

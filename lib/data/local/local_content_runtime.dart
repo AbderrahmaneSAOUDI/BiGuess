@@ -134,8 +134,8 @@ final class LocalContentRuntime {
     }
   }
 
-  void close() {
-    unawaited(releasePlayback());
+  Future<void> close() async {
+    await releasePlayback();
     final local = _repository;
     if (local is SqliteContentRepository) local.close();
   }
