@@ -26,6 +26,11 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: backend/content-api/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Python dependencies for test fixtures
+        run: pip install Pillow
       - run: npm ci
       - run: npm run typecheck
       # npm test builds only with Wrangler --dry-run, then uses isolated local

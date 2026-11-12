@@ -61,6 +61,15 @@ const server = http.createServer((req,res) => {
       return res.end(JSON.stringify({protocolVersion:1,scopeVersion:1,items,nextCursor:cursor ? null : `${uid}-page2`,
         resumeCursor:cursor ? `resume-${uid}` : null}));
     }
+    if (url.pathname === '/studio/v1/sync/changes') {
+      const cursor = url.searchParams.get('cursor');
+      if (cursor && interrupt) return res.writeHead(503).end(JSON.stringify({error:{code:'storage-unavailable'}}));
+      const items = uid === 'owner' && packRevision === 2
+        ? [{kind:'upsert',record:ownerProjection(pack('a'))}]
+        : [];
+      return res.end(JSON.stringify({protocolVersion:1,scopeVersion:1,items,nextCursor:null,
+        resumeCursor:cursor ? `${cursor}-next` : `resume-${uid}-next`}));
+    }
     return res.writeHead(404).end('{}');
   }
   const file = path.resolve(root,'.' + decodeURIComponent(url.pathname));
