@@ -1,0 +1,115 @@
+{
+  "audit_date": "2026-11-12",
+  "source_commit": "20bb0edf088de6ee9df3a1a65708f06836ab2c6e",
+  "scope": "host verification; no physical Android device",
+  "commands": [
+    {
+      "command": "flutter test",
+      "exit_code": 0,
+      "result": "401 passed"
+    },
+    {
+      "command": "flutter analyze",
+      "exit_code": 0,
+      "result": "No issues found"
+    },
+    {
+      "command": "python3 .agents/scripts/validate_setup.py",
+      "exit_code": 0,
+      "result": "962 checks"
+    },
+    {
+      "command": "python3 -m unittest discover -s .agents/tests -v",
+      "exit_code": 0,
+      "result": "164 tests passed"
+    },
+    {
+      "command": "python3 scripts/check_offline_gameplay.py --evidence /tmp/t46/mobile/offline",
+      "exit_code": 0,
+      "result": "SIGKILL then fresh restart, zero HTTP clients"
+    },
+    {
+      "command": "adb devices -l",
+      "exit_code": 0,
+      "result": "No attached devices; physical acceptance unavailable"
+    },
+    {
+      "command": "dart format --output=none --set-exit-if-changed lib test",
+      "exit_code": 0,
+      "result": "150 files, zero changes"
+    },
+    {
+      "command": "python3 scripts/generate_manifest.py --check",
+      "exit_code": 0,
+      "result": "1174 source assets reconciled; read-only, no publication"
+    }
+  ],
+  "offline": {
+    "result": "pass",
+    "network": "isolated Linux network namespace; loopback only",
+    "process_restart": "SIGKILL during first rendered round; fresh flutter_tester",
+    "source_archive": "removed before restart",
+    "rounds_after_restart": [
+      10,
+      3
+    ],
+    "http_client_attempts": 0,
+    "sqlite_integrity_check": "ok",
+    "sqlite_foreign_key_check": [],
+    "device_validation": "not performed; host Flutter engine and real SQLite/files",
+    "phases": [
+      {
+        "phase": "seed",
+        "exit_code": 79,
+        "app_sigkill_sent": true
+      },
+      {
+        "phase": "restart",
+        "exit_code": 0,
+        "app_sigkill_sent": false
+      }
+    ]
+  },
+  "log_fingerprints": {
+    "mobile/flutter-test.log": {
+      "sha256": "7180f11c11670e6fed3a7f517db812aeceb8ce04aba42f2d3b6378b401505a80",
+      "bytes": 94085
+    },
+    "mobile/flutter-analyze.log": {
+      "sha256": "0e0b8a5d214f7a0d766e06d213bd56c77dc22d77e711909635fa01769562a61f",
+      "bytes": 96
+    },
+    "setup.log": {
+      "sha256": "71117e61741dc11244c11e69b21b3e0edf4d8f18b3cc633022fb152c196862bf",
+      "bytes": 61
+    },
+    "automation.log": {
+      "sha256": "eb94958ec0ade56a8c3b9ba8984c0e90dbe91eadb8b9a55a9052e1f7a0a0316b",
+      "bytes": 28178
+    },
+    "mobile/offline-gate.log": {
+      "sha256": "df8293f1417eeceab42f129c5db4686e448064b6270e02a4b8a4c2acdcc9a01f",
+      "bytes": 677
+    },
+    "mobile/adb-devices.log": {
+      "sha256": "36f15c2fe32964a6fbe902e914a47739d4e6304b0d3e812bf08096ff0419b7ae",
+      "bytes": 26
+    },
+    "mobile/offline/seed-killed.txt": {
+      "sha256": "8a84a9e4d31d62bcb0b9b6ef43c76484f824d5f53977fc8df4c96189ac631203",
+      "bytes": 1181
+    },
+    "mobile/offline/restart.txt": {
+      "sha256": "226de03286f1e898fbb6225330168f1cd6ac7095feacdee448119a61017f9654",
+      "bytes": 1494
+    },
+    "mobile/format.log": {
+      "sha256": "e439e3611da76849d53f547fda22bacf0c3d2ca11f9cc6fe3a8bed5a2fd4c850",
+      "bytes": 49
+    },
+    "mobile/manifest.log": {
+      "sha256": "b745e80dea35df9e5ee2f9457c5a532f4350c22cd5fe17d9e1a142b7230957bf",
+      "bytes": 1405
+    }
+  }
+}
