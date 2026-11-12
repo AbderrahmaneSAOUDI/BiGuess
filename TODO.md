@@ -187,6 +187,8 @@ Compare a Flutter redesign against a React migration using maintenance cost, imp
 
 **Verification:** Inventory current source, contracts, verification reports and deployment workflow; record repeatable browser traces, payload and memory results, parity matrix, rollback rehearsal plan and signed architecture decision. Distinguish implemented features from targets.
 
+**Implementation evidence:** [T50 audit and migration proposal](docs/migration/T50-STUDIO-AUDIT-AND-MIGRATION-PROPOSAL.md). Documented feature-parity inventory across all 16 areas, reproducible baseline measurements (41 MB build, ~4.5 MB gzipped wire payload, 2.8s–9.5s startup vs <300 KB React target), Flutter vs React architecture trade-offs, and zero-downtime rollback strategy awaiting Owner approval.
+
 ### [ ] T51 — GATE: Design the premium Studio UX and obtain visual approval
 
 **Agent task:** Create a coherent visual direction before developing production components.
