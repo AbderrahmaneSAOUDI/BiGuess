@@ -1,0 +1,79 @@
+{
+  "audit_date": "2026-11-12",
+  "baseline_commit": "75520b66a46138593b8844ada7cc0535eca9c5b3",
+  "decision": "T49 NOT SIGNED OFF; participant trials NOT RUN",
+  "participant_trials": {
+    "studio_sessions_completed": 0,
+    "physical_android_playtests_completed": 0,
+    "participant_feedback_collected": false,
+    "time_to_first_game_seconds": null,
+    "outward_identity_readability": null,
+    "replay_intent": null,
+    "product_demand": "NOT ASSESSED",
+    "availability_questions": "Pending; no consent, appointment or approval inferred"
+  },
+  "device": {
+    "adb_devices_exit_code": 0,
+    "attached_devices": 0,
+    "physical_validation": "NOT RUN"
+  },
+  "gates": {
+    "T46": "NOT PASSED",
+    "T47": "NOT RUN; prerequisite not met",
+    "T48": "NO-GO; plan/execution approval pending",
+    "T49": "NOT SIGNED OFF"
+  },
+  "fresh_checks": [
+    {
+      "command": "flutter test",
+      "exit_code": 0,
+      "result": "401 passed"
+    },
+    {
+      "command": "flutter analyze",
+      "exit_code": 0,
+      "result": "No issues found"
+    },
+    {
+      "command": "python3 .agents/scripts/validate_setup.py",
+      "exit_code": 0,
+      "result": "962 checks"
+    },
+    {
+      "command": "python3 -m unittest discover -s .agents/tests -v",
+      "exit_code": 0,
+      "result": "164 passed"
+    }
+  ],
+  "log_fingerprints": {
+    "mobile-test.log": {
+      "sha256": "44b2fe8df06b06e8e670ea1e7c762c3403fe8bb993e2fd5aba8fb6a7d87737b3",
+      "bytes": 93368
+    },
+    "mobile-analyze.log": {
+      "sha256": "2ce2c3833d4d4b4b975725d1424d688ebc04c22c3b60ca2532be48439b413caa",
+      "bytes": 96
+    },
+    "setup.log": {
+      "sha256": "71117e61741dc11244c11e69b21b3e0edf4d8f18b3cc633022fb152c196862bf",
+      "bytes": 61
+    },
+    "automation.log": {
+      "sha256": "d04742d18859c3138d1744bc20a00081c7e1ea686dd5e29f3181d550d8d3dc32",
+      "bytes": 28178
+    },
+    "adb-devices.log": {
+      "sha256": "36f15c2fe32964a6fbe902e914a47739d4e6304b0d3e812bf08096ff0419b7ae",
+      "bytes": 26
+    }
+  },
+  "existing_fixture": {
+    "manifest": "test/fixtures/cleared_shapes/pack.json",
+    "sha256": "5ca39d53ceee770b79f0e6590653841d92a8c1917659cc206b9dfd53ec279526",
+    "cards": 4,
+    "explicit_test_clearance_verified": true,
+    "trial_publication_performed": false,
+    "limit": "Four toy Shapes support flow testing, not realistic content appeal or demand conclusions"
+  },
+  "scope": "Trial protocol, evidence record and MVP definition of done only; no participant/contact impersonation, product fixes, account changes, cloud probes, publication, legacy removal or app release"
+}
