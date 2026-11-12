@@ -96,13 +96,17 @@ While this roadmap organizes execution serially for a single-agent workflow, thi
 
 **Implementation evidence:** [T43 verification](docs/migration/T43-VERIFICATION.md). Home management separates explicit Check from Update, with timestamps/statuses/errors; catalog/Pack browsing never activates installed-Pack updates. Anonymous revision checks are small; opt-in compact deltas reconstruct and verify the signed target manifest locally, reusing private images. The 100→105 fixture transfers only five Card/rights changes and five new images, without a full manifest/archive download. Shared transfer exclusion, cancellation, stale-base/atomic-store protection and Start draining preserve installed content and frozen games. Local-only development IDs never enter public checks. Mobile: 344 tests and clean analysis; backend: 235 tests and clean typecheck; automation: 164 tests; setup: 962 checks; OpenAPI 3.1/sibling references pass. The optional backend extension is locally verified and remains undeployed; no production publication or Mobile release. Device/release gates remain separate.
 
-### [ ] T44 — Handle authoritative deletions during valid Home synchronization and manage storage
+### [x] T44 — Handle authoritative deletions during valid Home synchronization and manage storage
 **Agent task:** Separate user `Remove Download` (frees Free storage slot, redownloadable if still published) from server-issued Pack tombstones (no longer valid to redownload). Evaluate tombstones only through valid user-invoked Home/Pack-management synchronization or an explicitly approved future policy. Apply a detected deletion only at a safe Home/exit boundary; never during an active GameSession or by interpreting an absent catalog entry as deletion. Preserve accurate offline behavior and clearly explain that offline devices may retain content until they reconnect and sync.
 **Acceptance:** Valid tombstone on Home sync retires installed Pack without mid-round interruption; no forced background sync or server check to start game; user removal is reversible, cloud deletion is respected after sync, and temporary files/storage slots remain consistent.
 
-### [ ] T45 — Remove blocking launch-time update checks while keeping app updates separate
+**Implementation evidence:** [T44 verification](docs/migration/T44-VERIFICATION.md). User Remove Download frees Free storage slots with offline confirmation; server tombstones validate exact Pack ID, revision, administrative reason and UTC timestamp through configured-origin public transport. Manual Home sync applies authoritative deletions at safe boundaries; absent catalog entries, malformed/stale/incomplete results cannot retire content. Bounded storage cleanup reclaims at most eight entries per pass, protecting leased generations and live transfers. Start cancels/drains pending checks; immutable game snapshots retain private images until Home. Mobile: 389 tests and clean analysis; agent setup: 962 checks; automation: 164 tests. Isolated offline process gate passes SIGKILL, source removal, fresh restart, all 10 + 3 rounds, zero HTTP clients and SQLite integrity. No backend change, deployment or production publication.
+
+### [x] T45 — Remove blocking launch-time update checks while keeping app updates separate
 **Agent task:** Audit and replace the old startup silent/mandatory update behavior without changing unrelated code prematurely. An installed-Pack player must launch and play offline without forced online validation. App binary/APK/Play Store updates are distinct from manually installed Pack revisions; any mandatory app upgrade requires separate product approval and must not be confused with content synchronization.
 **Acceptance:** Offline launch is immediate and gameplay works with verified Packs; no background content update or blocking app-update dialog caused solely by unavailable servers; safe optional app update path is tested.
+
+**Implementation evidence:** [T45 verification](docs/migration/T45-VERIFICATION.md). Launch no longer checks remote app version, downloads patches, or opens mandatory update dialogs. About → App updates is the manual availability check; a separate action downloads/installs an APK or applies a patch. APK downloads require HTTPS and valid publisher SHA-256; cached installer retries rehash before installation. Existing gameplay cancellation/draining guards remain. Mobile: 401 tests and clean analysis; agent setup: 962 checks; automation: 164 tests. Isolated offline process gate passes SIGKILL, source removal, fresh restart, all 10 + 3 rounds, zero HTTP clients and SQLite integrity. No APK/OTA release, backend deployment or production publication.
 
 # PHASE F — Validate, migrate, and prepare controlled release
 
@@ -123,6 +127,471 @@ While this roadmap organizes execution serially for a single-agent workflow, thi
 **Acceptance:** Recorded findings, privacy/rights checks, technical evidence and final MVP definition of done; product demand assessed separately from engineering completion.
 
 ---
+
+# PHASE G — BiGuess Studio Web Modernization
+
+This is an intentional post-MVP migration/redesign proposal, not authorization to replace Studio. T44–T49 remain unfinished, separate gates and must satisfy their own acceptance criteria before Phase G execution. Historical Flutter decisions and completed evidence remain unchanged. T50 must explicitly approve a forward-only React replacement; blueprint amendments are follow-up approval items, not changes made by this roadmap.
+
+## Proposed architecture and universal quality/security contract
+
+Prefer a static client-rendered React + TypeScript application built with Vite in temporary `studio-web/`, alongside `studio/`. Validate Tailwind CSS, shadcn/ui accessible primitives, React Router, TanStack Query/Table/Virtual, IndexedDB (possibly Dexie), React Hook Form + Zod, Motion for React, and Vitest/React Testing Library/Playwright in T50. Each dependency needs a concrete purpose, browser compatibility, security review and acceptable bundle cost; no automatic additions. Node.js is frontend tooling only; Next.js, SSR or a production server require measured justification and separate approval. Retain Workers/D1/private R2, Firebase identity, Cloudflare Pages and GitHub Actions.
+
+- **Visual quality:** Original, coherent BiGuess identity, professional typography, spacing, surfaces and component language; preserve the exact centralized BiGuess palette unless separately approved. Keep readable density; references are interaction inspiration, not copied templates. Optional dark mode requires design approval.
+- **Responsive quality:** Consider desktop, tablet and mobile independently, including touch-friendly cards, bottom sheets/full-screen editors, safe areas, landscape, zoom and software keyboards. Keep critical actions reachable; reduce clicks and nested dialogs without removing security confirmations.
+- **Performance:** Measure bundle size, memory, responsiveness and stability throughout. Avoid redundant requests/renders, huge DOM trees, oversized decoding and long main-thread tasks; use bounded workers, lazy resources and virtualization where measured.
+- **Motion/accessibility:** Purposeful navigation/progress/state feedback, never required to understand or complete actions. Semantic labels, focus management, keyboard/mouse/touch, text scaling, contrast and reduced motion target WCAG 2.2 AA.
+- **Security/product:** Preserve frozen anonymous `/content/v1` and compatible Studio contracts, canonical Card fields, server-derived Owner/Collector scope and zero Collector deletion. Never bundle credentials, signing keys or private datasets; isolate account caches and reject late prior-session responses. Keep Anime/Flags quarantined. No billing, public creators, marketplace, AI or F01–F08 expansion; Android/gameplay remain independent.
+- **Data/workflow:** Preserve offline drafts, explicit Commit/manual Refresh, revisions, idempotency and conflicts. No polling, realtime or per-keystroke server writes. Browser storage is best effort; never promise recovery after eviction without a verified backup. No irreversible migration without approval, no deletion of the old dataset before verified migration, and no automatic publication.
+- **Release:** Keep `https://studio.saoudi.online`, the existing scoped Pages/GitHub Actions mechanism and the working Flutter frontend until approved cutover. Frontend release never triggers backend deployment, D1 migration, publication or Android release.
+
+## Execution sequence and approval gates
+
+**T50 → T51 → T52 → T53 → T54 → T55 → T56 → T57 → T58 → T59 → T60 → T61 → T62 → T63 → T64 → T65 → T66 → T67**
+
+A single coding agent follows this order; parallel work requires satisfied dependencies and a documented reviewed exception. T50 architecture, T51 visual design, T56 local-data preservation, T66 validation and T67 cutover are explicit approval gates. **No production replacement before T66 passes and explicit T67 release approval.** Each ticket normally yields one reviewable PR; staged tickets below use ordered, separately reviewable PRs within that ticket, with completion only after all stages pass.
+
+T52 precedes the application scaffold: deliver tokens, component specifications and isolated previews first; integrate runnable React primitives into T53's scaffold as its second PR stage. Any need for an earlier temporary React harness requires a reviewed sequencing exception, not an implicit full application build.
+
+### [ ] T50 — GATE: Audit current Studio, benchmark performance, and approve frontend migration
+
+**Agent task:** Audit the existing Flutter Web Studio before replacing anything.
+
+Document every screen, user journey, API integration, role restriction, IndexedDB workflow, and existing feature.
+
+Create a complete feature-parity matrix covering at least:
+
+- Dashboard
+- Topics
+- My Packs
+- Cards
+- Profile and statistics
+- Google sign-in/sign-out
+- Owner/Collector permissions
+- Card editing
+- Multi-image import
+- Duplicate detection
+- Image normalization/upload
+- Offline drafts
+- Commit/Refresh
+- Conflict handling
+- Publishing/rights approval
+- Loading, error, and recovery states
+
+Record current browser startup performance, main interactions, bundle size, memory behavior, and mobile usability problems.
+
+Compare a Flutter redesign against a React migration using maintenance cost, implementation risk, performance, usability, and dependency impact.
+
+**Acceptance:** Documented feature-parity inventory, reproducible baseline measurements, migration risks, rollback strategy, and explicit owner approval of the React migration before T51 proceeds.
+
+**Dependencies:** T49 completion; existing Studio implementation and deployment evidence. Preserve [Studio scope contracts](contracts/studio/v1/README.md), [image ingestion](contracts/studio/v1/image-ingestion.md), [profile](contracts/studio/v1/profile.md), and [public content contracts](contracts/content/v1).
+
+**Verification:** Inventory current source, contracts, verification reports and deployment workflow; record repeatable browser traces, payload and memory results, parity matrix, rollback rehearsal plan and signed architecture decision. Distinguish implemented features from targets.
+
+### [ ] T51 — GATE: Design the premium Studio UX and obtain visual approval
+
+**Agent task:** Create a coherent visual direction before developing production components.
+
+Design high-fidelity mockups for desktop, tablet, and mobile, covering Dashboard, Topics, Packs, Cards, bulk import, Card editing, publishing, and authentication states.
+
+The design should include:
+
+- Distinct BiGuess brand identity
+- Premium typography and spacing
+- Professional color palette
+- Strong visual hierarchy
+- High-quality cards, tables, menus, and dialogs
+- Elegant image-focused layouts
+- Consistent interaction patterns
+- Clear status and validation presentation
+- Light and optional dark-theme proposals
+- Purposeful animation specifications
+
+Provide mockups for important loading, empty, offline, error, and conflict states.
+
+Avoid blindly copying Linear, Notion, Airtable, or other products. Use them only as references for interaction quality and visual discipline.
+
+**Acceptance:** Approved design direction, component inventory, responsive mockups, interaction specifications, accessibility review, and an explicit owner design sign-off.
+
+No full frontend implementation before approval.
+
+**Dependencies:** T50 accepted; T50/T51 approvals and all applicable earlier Phase G gates. Preserve [Studio scope contracts](contracts/studio/v1/README.md), [image ingestion](contracts/studio/v1/image-ingestion.md), [profile](contracts/studio/v1/profile.md), and [public content contracts](contracts/content/v1).
+
+**Verification:** Review desktop/tablet/mobile mockups and all state variants with keyboard/focus/contrast annotations; record owner sign-off before production component work.
+
+### [ ] T52 — Build the reusable design system and animation foundations
+
+**Agent task:** Create the React design system from the approved T51 designs.
+
+Define tokens for typography, colors, spacing, borders, radii, shadows, elevation, responsive layouts, and motion.
+
+Build accessible shared primitives such as buttons, inputs, comboboxes, dialogs, sheets, dropdowns, tables, cards, status indicators, notifications, skeletons, and confirmation flows.
+
+Define motion durations and easing curves. Prefer brief transitions, typically around 120–250 ms, adjusted to the interaction.
+
+Support `prefers-reduced-motion`.
+
+**Acceptance:** Documented design tokens, reusable components, representative component previews/tests, consistent visual states, keyboard navigation, reduced-motion support, and no substantial duplication of styling logic.
+
+**Dependencies:** T51 accepted; T50/T51 approvals and all applicable earlier Phase G gates. Preserve [Studio scope contracts](contracts/studio/v1/README.md), [image ingestion](contracts/studio/v1/image-ingestion.md), [profile](contracts/studio/v1/profile.md), and [public content contracts](contracts/content/v1).
+
+**Verification:** Component state previews and accessibility/keyboard/reduced-motion tests; review token reuse and motion timing. Stage 1 specifications/previews; stage 2 runnable integration in T53.
+
+### [ ] T53 — Scaffold the independent React Studio application and CI
+
+**Agent task:** Create the separate React + TypeScript + Vite project without replacing Flutter Studio.
+
+Establish routing, module boundaries, environment configuration, strict TypeScript checking, ESLint, formatting, tests, local development scripts, and production builds.
+
+Set up scoped CI without modifying the current live deployment target.
+
+Configure production-safe static routing and prepare for Cloudflare Pages.
+
+**Acceptance:** A working independent frontend with passing type checks, lint, tests, and static builds; existing Flutter Studio and Android Mobile remain unchanged and functional.
+
+**Dependencies:** T52 accepted; T50/T51 approvals and all applicable earlier Phase G gates. Preserve [Studio scope contracts](contracts/studio/v1/README.md), [image ingestion](contracts/studio/v1/image-ingestion.md), [profile](contracts/studio/v1/profile.md), and [public content contracts](contracts/content/v1).
+
+**Verification:** Run strict typecheck, lint, unit tests and static build in scoped CI; test deep-link fallback and confirm current deployment workflow/target are untouched. Stage 1 scaffold; stage 2 T52 component integration.
+
+### [ ] T54 — Reimplement authentication, authorization-aware routing, and session lifecycle
+
+**Agent task:** Integrate the existing Firebase Google sign-in system.
+
+Preserve server-derived Owner/Collector permissions and reject unauthorized users.
+
+Implement protected routing, session restoration, token refresh, expiry/revocation handling, sign-out, account switching, and clear offline/authentication errors.
+
+Handle browser popup/redirect limitations.
+
+Do not assume frontend route protection provides server-side security.
+
+**Acceptance:** Two-Collector/Owner and unauthorized-user tests; no cross-account data exposure; expired/revoked sessions fail safely; Chrome, Firefox, and WebKit authentication flows are tested where supported.
+
+**Dependencies:** T53 accepted; T50/T51 approvals and all applicable earlier Phase G gates. Preserve [Studio scope contracts](contracts/studio/v1/README.md), [image ingestion](contracts/studio/v1/image-ingestion.md), [profile](contracts/studio/v1/profile.md), and [public content contracts](contracts/content/v1).
+
+**Verification:** Automated two-Collector/Owner/unauthorized and expired/revoked-session tests, account-switch late-response checks; browser popup/redirect limitations documented with supported Chromium/Firefox/WebKit checks.
+
+### [ ] T55 — Implement a typed, contract-compatible Studio API client
+
+**Agent task:** Build a typed frontend service layer using the existing Studio API contracts.
+
+Cover authorized reads, pagination, change feeds, mutations, image ingestion, role lookup, statistics, and publishing operations.
+
+Handle HTTP 401/403/404/409/412, cancellation, timeouts, validation, retry policies, and idempotency correctly.
+
+Do not make unauthorized or hidden private records available through frontend caches.
+
+Avoid unnecessary background requests.
+
+**Acceptance:** Contract tests and representative Worker integration tests pass without changing established public or administrative API semantics.
+
+**Dependencies:** T54 accepted; T50/T51 approvals and all applicable earlier Phase G gates. Preserve [Studio scope contracts](contracts/studio/v1/README.md), [image ingestion](contracts/studio/v1/image-ingestion.md), [profile](contracts/studio/v1/profile.md), and [public content contracts](contracts/content/v1).
+
+**Verification:** Contract fixtures and local Worker integration tests for reads, pagination, feeds, mutations, ingestion, profile and publication; test status errors, cancellation, retries and idempotency without backend semantic changes.
+
+### [ ] T56 — GATE: Preserve and migrate IndexedDB drafts, offline data, and pending operations
+
+**Agent task:** Audit the existing Flutter Studio browser-storage schema and pending operation formats.
+
+Implement account-isolated IndexedDB persistence for the React application.
+
+Design and verify a safe migration path for existing browser-local data, including drafts, unsent changes, conflict markers, revisions, and image references.
+
+Maintain offline editing of previously synchronized authorized data when browser storage permits.
+
+Never overwrite or delete an old local dataset before a verified migration, and never silently discard an unsent operation.
+
+Define recovery behavior for quota errors, incomplete migrations, browser eviction, and cross-account switches.
+
+**Acceptance:** Real-browser tests prove draft preservation through reload, offline editing, migration interruption/retry, and account switching; no privilege leakage, silent data loss, or unintended automatic server writes.
+
+Require explicit approval before any irreversible migration.
+
+**Dependencies:** T55 accepted; T50/T51 approvals and all applicable earlier Phase G gates. Preserve [Studio scope contracts](contracts/studio/v1/README.md), [image ingestion](contracts/studio/v1/image-ingestion.md), [profile](contracts/studio/v1/profile.md), and [public content contracts](contracts/content/v1).
+
+**Verification:** Use real existing-schema fixtures and browser tests for reload, offline editing, interrupted migration/retry, quota failure, stale tabs and account switches. Preview-origin storage cannot prove same-origin production migration; rehearse same-origin upgrade and rollback. Stage 1 audit/backup plan; stage 2 reversible migrator and proof; irreversible steps require owner approval.
+
+### [ ] T57 — Build the responsive application shell and navigation
+
+**Agent task:** Implement the approved new layout:
+
+- Desktop navigation sidebar
+- Collapsible or compact navigation on smaller screens
+- Mobile-appropriate navigation and menus
+- Contextual page headers
+- Breadcrumbs where useful
+- Global search entry points where appropriate
+- Account menu
+- Clear Commit/Refresh indicators
+- Connection and unsaved-change status
+
+Do not simply shrink the desktop layout for mobile.
+
+Support mobile safe areas, software keyboards, landscape orientations, touch interactions, and browser zoom.
+
+**Acceptance:** Layouts work at representative widths including 320, 360, 390, 430, 768, 1024, and 1440 pixels; no horizontal overflow, inaccessible controls, or hidden critical actions.
+
+**Dependencies:** T56 accepted; T50/T51 approvals and all applicable earlier Phase G gates. Preserve [Studio scope contracts](contracts/studio/v1/README.md), [image ingestion](contracts/studio/v1/image-ingestion.md), [profile](contracts/studio/v1/profile.md), and [public content contracts](contracts/content/v1).
+
+**Verification:** Browser screenshots and keyboard/touch checks at 320/360/390/430/768/1024/1440 px, landscape, 200% text/zoom, safe areas and software keyboard; assert no overflow or hidden actions.
+
+### [ ] T58 — Rebuild the Dashboard and contributor Profile
+
+**Agent task:** Create a visually polished, practical Dashboard that gives authorized users an immediate understanding of their content and pending work.
+
+Show role-appropriate counts, recent activity, draft status, validation problems, and actionable navigation using existing authorized information.
+
+Rebuild contributor Profile, role display, and scoped statistics.
+
+Avoid unnecessary analytics features or exposing other contributors' activity.
+
+**Acceptance:** Dashboard and Profile accurately display authorized data, have useful empty/offline states, and remain clear and performant on mobile.
+
+**Dependencies:** T57 accepted; T50/T51 approvals and all applicable earlier Phase G gates. Preserve [Studio scope contracts](contracts/studio/v1/README.md), [image ingestion](contracts/studio/v1/image-ingestion.md), [profile](contracts/studio/v1/profile.md), and [public content contracts](contracts/content/v1).
+
+**Verification:** Role-scoped fixture tests and mobile browser checks for accurate statistics, navigation and loading/empty/offline/error states.
+
+### [ ] T59 — Rebuild Topic management
+
+**Agent task:** Reimplement Topic browsing, creation, editing, visibility changes, search, and Owner-only lifecycle actions.
+
+Provide an efficient Topic taxonomy picker for Collectors.
+
+Respect existing role restrictions and relationships between Topics and Packs.
+
+Use the new design system, accessible forms, and responsive presentation.
+
+**Acceptance:** Feature parity with T29, authorization regression tests, clear confirmation flows, and desktop/mobile usability tests.
+
+**Dependencies:** T58 accepted; T50/T51 approvals and all applicable earlier Phase G gates. Preserve [Studio scope contracts](contracts/studio/v1/README.md), [image ingestion](contracts/studio/v1/image-ingestion.md), [profile](contracts/studio/v1/profile.md), and [public content contracts](contracts/content/v1).
+
+**Verification:** T29 parity, Owner/Collector negative authorization tests, taxonomy relationship validation and keyboard/touch form checks.
+
+### [ ] T60 — Rebuild Pack management
+
+**Agent task:** Create a premium Packs workspace with useful cards or tables, search, status filters, sorting, creation/editing, and contextual actions.
+
+Show Card counts, completion status, draft state, publishing eligibility, and synchronization state where existing contracts support them.
+
+Make the primary content workflow understandable without navigating through excessive dialogs.
+
+Preserve Owner global access and Collector ownership restrictions.
+
+**Acceptance:** Feature parity with T30, correct scope enforcement, safe pending edits, responsive presentation, and clear recovery from invalid relationships or conflicts.
+
+**Dependencies:** T59 accepted; T50/T51 approvals and all applicable earlier Phase G gates. Preserve [Studio scope contracts](contracts/studio/v1/README.md), [image ingestion](contracts/studio/v1/image-ingestion.md), [profile](contracts/studio/v1/profile.md), and [public content contracts](contracts/content/v1).
+
+**Verification:** T30 parity, ownership and invalid-parent tests, retained pending edits/conflicts, responsive filter/sort/action browser checks.
+
+### [ ] T61 — Build the high-performance Cards workspace
+
+**Agent task:** Create the Studio's primary content-management interface.
+
+Support:
+
+- Responsive Card table and image-grid views
+- Fast search and multi-dimensional filters
+- Difficulty/status indicators
+- Duplicate detection
+- Sorting
+- Multi-selection
+- Role-appropriate bulk operations
+- Keyboard shortcuts where useful
+- Efficient pagination or virtualization
+- Clear draft/synced/conflict status
+
+Target thousands of Cards without rendering all rows or images simultaneously.
+
+Preserve existing exact-byte, exact-name, and similar-name duplicate semantics.
+
+**Acceptance:** Feature parity with T34; a 5,000-Card test dataset remains smooth and searchable; no cross-account leakage; mobile has a genuinely usable Card browsing and selection interface.
+
+**Dependencies:** T60 accepted; T50/T51 approvals and all applicable earlier Phase G gates. Preserve [Studio scope contracts](contracts/studio/v1/README.md), [image ingestion](contracts/studio/v1/image-ingestion.md), [profile](contracts/studio/v1/profile.md), and [public content contracts](contracts/content/v1).
+
+**Verification:** T34 parity and duplicate fixtures (exact bytes/name/similar name); instrument 5,000 Cards, bounded DOM/image loading, search/filter latency and mobile multi-selection against T50 budgets.
+
+### [ ] T62 — Rebuild Card editing and image review
+
+**Agent task:** Create a fast, polished Card editing experience.
+
+Consider contextual drawers, side panels, or dedicated mobile screens rather than excessive modal stacking.
+
+Preserve canonical Card product fields only:
+
+- Name
+- Image
+- Difficulty (1–3)
+- Pack relationship
+
+Support image preview, replacement, validation, duplicate warnings, and draft-status visibility.
+
+Maintain stable Card IDs and existing permissions.
+
+**Acceptance:** Feature parity with T31, keyboard/touch accessibility, no accidental data loss, and correct offline draft behavior.
+
+**Dependencies:** T61 accepted; T50/T51 approvals and all applicable earlier Phase G gates. Preserve [Studio scope contracts](contracts/studio/v1/README.md), [image ingestion](contracts/studio/v1/image-ingestion.md), [profile](contracts/studio/v1/profile.md), and [public content contracts](contracts/content/v1).
+
+**Verification:** T31 parity, stable-ID and canonical-field tests, offline edit/reload, replacement/validation/duplicate handling and keyboard/touch loss-prevention browser checks.
+
+### [ ] T63 — Rebuild the bulk image import and Card creation workflow
+
+**Agent task:** Make multi-image import one of the strongest features of the new Studio.
+
+Create an efficient desktop and mobile flow for:
+
+- Selecting or dropping many images
+- Previewing and reviewing candidates
+- Filename-based name suggestions
+- Batch editing names and difficulties
+- Duplicate detection
+- Image validation and normalization
+- Processing progress
+- Individual errors
+- Cancellation and retry
+- Safe upload and explicit Commit
+- Recoverable local drafts where browser storage permits
+
+Use bounded worker-based image processing, not main-thread work that freezes interactions.
+
+Preserve existing upload limits, server validation, ownership rules, and idempotent mutation semantics.
+
+**Acceptance:** Hundreds of fixture images can be prepared and reviewed without major UI stalls; cancellation and partial failures are recoverable; no automatic publication or silent loss of staged changes.
+
+**Dependencies:** T62 accepted; T50/T51 approvals and all applicable earlier Phase G gates. Preserve [Studio scope contracts](contracts/studio/v1/README.md), [image ingestion](contracts/studio/v1/image-ingestion.md), [profile](contracts/studio/v1/profile.md), and [public content contracts](contracts/content/v1).
+
+**Verification:** Browser import of hundreds of fixtures with measured main-thread stalls, bounded worker/memory use, cancellation/retry, partial failure, reload recovery, upload limits and explicit Commit. Stage 1 preparation/review; stage 2 upload/recovery integration.
+
+### [ ] T64 — Rebuild synchronization, conflict resolution, and publishing workflows
+
+**Agent task:** Create a clear and trustworthy interface for:
+
+- Pending local changes
+- Explicit Commit
+- Manual Refresh
+- Revision conflicts
+- Stale browser tabs
+- Upload failures
+- Validation errors
+- Publishing readiness
+- Owner rights approval
+- Preview/review/publish/unpublish
+
+Do not introduce background polling, realtime collaboration, or per-keystroke server writes.
+
+Make destructive and privileged actions deliberate and unambiguous.
+
+**Acceptance:** Feature parity with T35/T36, correct Worker permissions, safe offline-to-online recovery, and no silent overwrite or unauthorized publication.
+
+**Dependencies:** T63 accepted; T50/T51 approvals and all applicable earlier Phase G gates. Preserve [Studio scope contracts](contracts/studio/v1/README.md), [image ingestion](contracts/studio/v1/image-ingestion.md), [profile](contracts/studio/v1/profile.md), and [public content contracts](contracts/content/v1).
+
+**Verification:** T35/T36 parity with local Worker: offline-to-online Commit/Refresh, stale tabs, 409/412, failed uploads, idempotent retries, rights review and unauthorized publishing. Stage 1 sync/conflicts; stage 2 privileged publication integration.
+
+### [ ] T65 — Implement premium motion, interactions, and accessibility polish
+
+**Agent task:** Polish the full application with restrained, cohesive animation.
+
+Examples include:
+
+- Subtle route transitions
+- Smooth navigation state changes
+- Hover/focus/press feedback
+- Animated sidebar and mobile menu
+- Dialog and drawer entrances
+- Status transitions
+- Import progress feedback
+- Loading skeletons
+- Optimistic local interaction feedback where safe
+- Toasts and confirmations
+
+Do not animate every element, delay important actions, or use excessive decorative movement.
+
+Avoid expensive layout-thrashing animations. Favor transform and opacity when appropriate.
+
+Ensure reduced-motion settings disable nonessential motion.
+
+Target WCAG 2.2 AA accessibility, including contrast, keyboard operation, focus visibility, accessible announcements, and touch targets.
+
+**Acceptance:** Consistent interaction quality, reduced-motion compatibility, accessibility tests, and no major animation-induced interaction delays or layout shifts.
+
+**Dependencies:** T64 accepted; T50/T51 approvals and all applicable earlier Phase G gates. Preserve [Studio scope contracts](contracts/studio/v1/README.md), [image ingestion](contracts/studio/v1/image-ingestion.md), [profile](contracts/studio/v1/profile.md), and [public content contracts](contracts/content/v1).
+
+**Verification:** Automated accessibility scans plus manual keyboard, focus, announcements, contrast, touch and reduced-motion checks; profile motion for layout thrashing, delays and shifts.
+
+### [ ] T66 — GATE: Performance, cross-browser, mobile, security, and feature-parity validation
+
+**Agent task:** Run an extensive verification program before production replacement.
+
+Measure:
+
+- Initial JavaScript and CSS payloads
+- Startup and route rendering
+- Core Web Vitals
+- Search and filtering with 5,000+ Cards
+- Large-table scrolling
+- Image preview and batch processing
+- CPU and memory usage
+- Animation smoothness
+- Offline draft recovery
+- Session/account isolation
+- Authorized upload and publishing
+- Real-device mobile usability
+
+Use real browser instrumentation, not only isolated unit benchmarks.
+
+Target good Core Web Vitals on representative production conditions:
+
+- LCP ≤ 2.5 seconds
+- INP ≤ 200 ms
+- CLS ≤ 0.1
+
+Define reproducible browser/device/network conditions and report measured results, not assumed scores.
+
+Aim for smooth 60 FPS motion on representative supported devices, with graceful degradation on slower hardware.
+
+Use lazy loading, code splitting, memoization where justified, virtualized collections, careful image decoding, and bounded workers.
+
+Run Playwright and relevant browser tests for desktop Chromium, Firefox, WebKit, and mobile viewports.
+
+Compare the complete React feature-parity matrix against the existing Flutter Studio.
+
+**Acceptance:** Documented passing functional/security/offline/accessibility test matrix, approved performance budgets, recorded measurements, no critical unresolved regression, and explicit owner acceptance before cutover.
+
+**Dependencies:** T65 accepted; T50/T51 approvals and all applicable earlier Phase G gates. Preserve [Studio scope contracts](contracts/studio/v1/README.md), [image ingestion](contracts/studio/v1/image-ingestion.md), [profile](contracts/studio/v1/profile.md), and [public content contracts](contracts/content/v1).
+
+**Verification:** Run recorded Playwright Chromium/Firefox/WebKit and real-device trials, security/account/offline matrix and full parity review. Record payload, startup/routes, 5,000+ Card search/scroll, batch images, CPU/memory and frame timing under reproducible device/network/cache conditions. Agree numerical bundle/memory budgets from T50; distinguish lab proxies from field INP. Stage 1 evidence; stage 2 regression closure and explicit owner acceptance.
+
+### [ ] T67 — GATE: Controlled Cloudflare Pages cutover, rollback, and legacy cleanup
+
+**Agent task:** Plan the final replacement of Flutter Studio on `https://studio.saoudi.online`.
+
+Keep the existing production frontend available until the React version passes T66 and the owner explicitly approves release.
+
+Update the existing scoped GitHub Actions deployment workflow to build and publish the approved React static output.
+
+Do not create an unnecessary second production deployment mechanism.
+
+Validate:
+
+- Firebase authorized origin
+- Worker CORS
+- HTTPS and custom domain
+- Deep-link routing and browser refresh
+- Security headers and cache policy
+- Absence of credentials/private data in bundles
+- Account isolation
+- Existing IndexedDB data migration
+- Commit/Refresh and publishing
+- Mobile behavior
+- Failure rollback to a known-good release
+
+Never couple frontend deployment to automatic backend deployment, D1 migrations, content publication, or Android releases.
+
+Retain the Flutter implementation and recovery instructions until a separate approved cleanup stage determines removal is safe.
+
+**Acceptance:** Documented successful cutover, real production smoke tests with authorized accounts, preserved local drafts, functioning scoped deployment and rollback, and explicit final acceptance of the redesigned Studio.
+
+**Dependencies:** T66 accepted; T50/T51 approvals and all applicable earlier Phase G gates. Preserve [Studio scope contracts](contracts/studio/v1/README.md), [image ingestion](contracts/studio/v1/image-ingestion.md), [profile](contracts/studio/v1/profile.md), and [public content contracts](contracts/content/v1).
+
+**Verification:** Rehearse known-good rollback including storage compatibility before owner release approval; then production authorized-account smoke checks, Firebase origin/CORS, HTTPS, deep links, headers/cache, bundle secrets, drafts, Commit/Refresh/publication and mobile. Stage 1 approved release/rollback plan; stage 2 scoped cutover and observation; stage 3 separately approved legacy cleanup after retention period and recovery proof.
 
 ## Human decisions / non-coding gates for remaining tickets
 
