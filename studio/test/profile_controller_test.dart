@@ -10,6 +10,9 @@ import 'profile_api_test.dart' show profileJson;
 
 class Identity implements StudioIdentity {
   String uid = 'a';
+  Stream<String?>? changesStream;
+  @override
+  Stream<String?> get changes => changesStream ?? const Stream.empty();
   @override
   Future<String?> token({bool refresh = false}) async => uid;
   @override
@@ -153,6 +156,31 @@ void main() {
       expect(controller.profile, isNotNull);
       session.rejectAuthorization('scope-changed');
       expect(controller.profile, isNull);
+    },
+  );
+  test(
+    'token refresh event for same authorized account preserves profile response',
+    () async {
+      final streamController = StreamController<String?>.broadcast();
+      identity.changesStream = streamController.stream;
+      session.dispose();
+      controller.dispose();
+      session = StudioSession(identity, authorization);
+      await session.start();
+      await session.validate();
+      controller = ProfileController(session: session, api: api);
+
+      api.handler = (_, _) async {
+        streamController.add('a');
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        return ContributorProfile.fromJson(profileJson(uid: 'a'));
+      };
+      await controller.refresh();
+      expect(controller.profile, isNotNull);
+      expect(controller.profile!.principal.uid, 'a');
+      expect(controller.loading, isFalse);
+      expect(controller.errorCode, isNull);
+      await streamController.close();
     },
   );
 }

@@ -6,7 +6,9 @@ import 'profile_api.dart';
 
 /// Ephemeral private activity. It is never persisted or derived from local edits.
 class ProfileController extends ChangeNotifier {
-  ProfileController({required this.session, required this.api}) {
+  ProfileController({required this.session, required this.api})
+      : _lastUid = session.principal?.uid,
+        _lastRole = session.principal?.role {
     session.addListener(_sessionChanged);
   }
   final StudioSession session;
@@ -16,12 +18,23 @@ class ProfileController extends ChangeNotifier {
   bool loading = false;
   int _generation = 0;
   bool _disposed = false;
+  String? _lastUid;
+  String? _lastRole;
 
   void _sessionChanged() {
-    _generation++;
-    profile = null;
-    errorCode = null;
-    _notify();
+    final principal = session.principal;
+    final uid = principal?.uid;
+    final role = principal?.role;
+    if (session.phase != SessionPhase.authorized ||
+        uid != _lastUid ||
+        role != _lastRole) {
+      _lastUid = uid;
+      _lastRole = role;
+      _generation++;
+      profile = null;
+      errorCode = null;
+      _notify();
+    }
   }
 
   void _notify() {

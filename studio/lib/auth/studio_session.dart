@@ -100,11 +100,12 @@ class StudioSession extends ChangeNotifier {
     _subscription = identity.changes.listen(
       (uid) {
         if (_suspended || _signingOut || _signedOutByUser) return;
-        identityUid = uid;
         if (uid == null) {
+          identityUid = null;
           _generation++;
           if (phase != SessionPhase.error) _clear(SessionPhase.signedOut);
-        } else {
+        } else if (uid != identityUid || phase != SessionPhase.authorized) {
+          identityUid = uid;
           unawaited(validate());
         }
       },
