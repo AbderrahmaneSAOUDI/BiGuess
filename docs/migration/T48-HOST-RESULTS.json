@@ -1,0 +1,65 @@
+{
+  "audit_date": "2026-11-12",
+  "baseline_commit": "6c8115ea4c1841d83aeee237eb921e30bc8c6198",
+  "decision": "NO-GO for new production rollout; owner approval pending",
+  "fresh_commands": [
+    {
+      "command": "flutter test",
+      "exit_code": 0,
+      "result": "401 passed"
+    },
+    {
+      "command": "flutter analyze",
+      "exit_code": 0,
+      "result": "No issues found"
+    },
+    {
+      "command": "python3 .agents/scripts/validate_setup.py",
+      "exit_code": 0,
+      "result": "962 checks"
+    },
+    {
+      "command": "python3 -m unittest discover -s .agents/tests -v",
+      "exit_code": 0,
+      "result": "164 passed"
+    }
+  ],
+  "log_fingerprints": {
+    "mobile-test.log": {
+      "sha256": "42d05dde383f585c6c8d9bb86a83f722fbd6834e5fa17c21771a2946ef6af678",
+      "bytes": 94032
+    },
+    "mobile-analyze.log": {
+      "sha256": "2ce2c3833d4d4b4b975725d1424d688ebc04c22c3b60ca2532be48439b413caa",
+      "bytes": 96
+    },
+    "setup.log": {
+      "sha256": "71117e61741dc11244c11e69b21b3e0edf4d8f18b3cc633022fb152c196862bf",
+      "bytes": 61
+    },
+    "automation.log": {
+      "sha256": "203bae1f6b8f399ee31355127129e264d190c000ce8e2715e23d239b815e5195",
+      "bytes": 28178
+    }
+  },
+  "audited_source_sha256": {
+    ".github/workflows/ci.yml": "d4a5263dc7ed02577a398d5a27ea8def612c70bcdd1a18de3292f71fa557c5e0",
+    ".github/workflows/content-api-checks.yml": "962ea1eda397b6437fe373876f3f33d7f46cb04b6a89e64ae9a323a212777c74",
+    ".github/workflows/studio-web-deploy.yml": "667b74f13d9d0f42956873a178366cb179c227ad363cd2428f78c9dfb51e5a0c",
+    "backend/content-api/wrangler.production.json": "14d45cb151bc2bd0b0931f5d24d9d6b123b3c5fdaae1251611bac194d8d45a0e",
+    "backend/content-api/wrangler.json": "c99e3a8cb0ae1e2f7768f11d774f82c2d2283929c224ad578e6ce45097e74ab3",
+    "backend/content-api/migrations/0009_studio_profile.sql": "6c72b9f2a5e7da2cbdd4e652a4b55928efc03061218935e9a7d76403b0112d7e",
+    "backend/content-api/migrations/0010_legacy_quarantine.sql": "ddb14e0e90e4ac6356c9fa862891bd39856415fe2dcfdefd3b6393ed03f4da9d",
+    "android/app/build.gradle.kts": "ad23b297dbb5dd47e3ccfdf15ede9617031d555b9d770606fb5f7cb61850a3cc",
+    "shorebird.yaml": "1b8eeeb136876772f2ed52fe134e2ae3a77942abce54b8140842996c5907880b",
+    "lib/providers/pack_download_controller.dart": "4fab80da6e6f27cada220c5cfeecb4431f2b40be83d2d76d5b97f256a83ba3c4"
+  },
+  "reused_product_evidence": {
+    "report": "T46-VERIFICATION.md",
+    "backend_tests": 235,
+    "studio_tests": 288,
+    "chromium_indexeddb_tests": 10,
+    "limit": "Relevant product source unchanged; deployed versions and physical/live checks not certified by local tests"
+  },
+  "audit_side_effects": "No deployment, migration, credential provisioning, administrative content mutation or publication. Public catalog GET may create/reuse pagination snapshot bookkeeping; actual row delta not measured."
+}
