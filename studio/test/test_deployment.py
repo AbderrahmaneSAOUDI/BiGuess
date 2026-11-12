@@ -83,6 +83,7 @@ class PackagingTests(unittest.TestCase):
         headers = (self.output / '_headers').read_text()
         self.assertIn('frame-src https://project.firebaseapp.com;', headers)
         self.assertIn('https://apis.google.com/js/gen_204 ', headers)
+        self.assertIn('https://www.google.com/images/cleardot.gif ', headers)
         self.assertIn('https://private-api.example.com', headers)
         self.assertNotIn('https://*.googleapis.com', headers)
         script_policy = headers.split('script-src ', 1)[1].split(';', 1)[0]

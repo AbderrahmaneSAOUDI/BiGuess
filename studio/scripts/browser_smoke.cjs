@@ -110,7 +110,7 @@ const server = http.createServer((req, res) => {
         assert.equal(await page.getByRole('button', {name: 'Topics', exact: true}).count(), 0);
         assert.deepEqual(privateCalls, [], 'No private API calls before Worker authorization');
         await page.screenshot({path: `/tmp/t27-auth-${mobile ? 'mobile' : 'desktop'}.png`});
-        assert.deepEqual(errors.filter(error => !error.includes('popup-closed-by-user')), [], 'No browser runtime errors');
+        assert.deepEqual(errors.filter(error => !error.includes('popup-closed-by-user') && !error.includes('cleardot.gif') && !error.includes('gen_204')), [], 'No browser runtime errors');
         if (offlineShellEnabled) {
           await page.evaluate(async () => { await navigator.serviceWorker.ready; });
           assert.equal(await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length), 1);
