@@ -7,8 +7,8 @@ import 'profile_api.dart';
 /// Ephemeral private activity. It is never persisted or derived from local edits.
 class ProfileController extends ChangeNotifier {
   ProfileController({required this.session, required this.api})
-      : _lastUid = session.principal?.uid,
-        _lastRole = session.principal?.role {
+    : _lastUid = session.principal?.uid,
+      _lastRole = session.principal?.role {
     session.addListener(_sessionChanged);
   }
   final StudioSession session;
