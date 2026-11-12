@@ -8,6 +8,7 @@ import 'package:biguess/data/download/pack_download_repository.dart';
 import 'package:biguess/data/local/local_pack_file.dart';
 import 'package:biguess/data/local/local_content_runtime.dart';
 import 'package:biguess/data/local/local_pack_store.dart';
+import 'package:biguess/data/local/pack_tombstone.dart';
 import 'package:biguess/data/local/private_pack_images.dart';
 import 'package:crypto/crypto.dart' as hashes;
 import 'package:cryptography/cryptography.dart';
@@ -448,6 +449,27 @@ void main() {
         manifestSha256: summary.manifestSha256,
       );
       await expectLater(repository.download(stale), failure('catalog-changed'));
+      expect(await store.readInstalled(summary.id), isNull);
+    },
+  );
+
+  test(
+    'durable deletion blocks even direct downloads before any HTTP',
+    () async {
+      await store.install(File('test/fixtures/local_pack/colors.biguesspack'));
+      await store.applyTombstones(
+        [
+          PackTombstone(
+            packId: summary.id,
+            revision: 2,
+            deletedAt: DateTime.utc(2026),
+            sourceOrigin: base.origin,
+          ),
+        ],
+        expectedRevisions: {summary.id: 1},
+      );
+      await expectLater(repository.download(summary), failure('deleted'));
+      expect(requests, isEmpty);
       expect(await store.readInstalled(summary.id), isNull);
     },
   );

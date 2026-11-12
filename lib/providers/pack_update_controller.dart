@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/download/pack_download_repository.dart';
+import '../data/local/local_content_runtime.dart';
 import '../data/updates/pack_update_repository.dart';
 import '../domain/models/pack.dart';
 import 'catalog_controller.dart';
@@ -46,11 +48,12 @@ class PackUpdateBrowseState {
     this.packId,
     this.progress,
     this.error,
+    this.action,
   });
   final Map<String, PackUpdateStatus> statuses;
   final DateTime? checkedAt, updatedAt;
   final bool busy;
-  final String? packId, error;
+  final String? packId, error, action;
   final PackDownloadProgress? progress;
 }
 
@@ -71,7 +74,31 @@ class PackUpdateController extends Notifier<PackUpdateBrowseState> {
   }
 
   Future<void> check() => _run(null, (repository) async {
-    final results = await repository.check(cancellation: _cancellation);
+    final results = await repository!.check(cancellation: _cancellation);
+    if (!_alive) return;
+    _safeBoundary();
+    final deleted = results
+        .where((s) => s.state == PackUpdateAvailability.deleted)
+        .toList();
+    if (deleted.isNotEmpty) {
+      final origin = ref.read(publicCatalogBaseUriProvider)?.origin;
+      if (origin == null ||
+          deleted.any(
+            (s) => s.tombstone == null || s.tombstone!.sourceOrigin != origin,
+          )) {
+        throw const PackDownloadFailure('corrupt');
+      }
+      final runtime = ref.read(localContentRuntimeProvider);
+      if (runtime?.store == null) throw const PackDownloadFailure('storage');
+      await runtime!.store!.applyTombstones(
+        deleted.map((s) => s.tombstone!),
+        expectedRevisions: {
+          for (final s in deleted) s.packId: s.installedRevision,
+        },
+        checkCancelled: _safeBoundary,
+      );
+      await _refreshManagement(runtime);
+    }
     if (!_alive) return;
     state = PackUpdateBrowseState(
       statuses: Map.unmodifiable({
@@ -88,7 +115,7 @@ class PackUpdateController extends Notifier<PackUpdateBrowseState> {
       return Future.value();
     }
     return _run(packId, (repository) async {
-      await repository.update(
+      await repository!.update(
         target!,
         cancellation: _cancellation,
         onProgress: (progress) {
@@ -100,6 +127,7 @@ class PackUpdateController extends Notifier<PackUpdateBrowseState> {
             busy: true,
             packId: packId,
             progress: progress,
+            action: 'update',
           );
         },
       );
@@ -127,13 +155,86 @@ class PackUpdateController extends Notifier<PackUpdateBrowseState> {
         checkedAt: state.checkedAt,
         updatedAt: DateTime.now().toUtc(),
       );
-    });
+    }, actionName: 'update');
+  }
+
+  Future<void> removeDownload(Pack pack) => _run(
+    pack.id,
+    (_) async {
+      _safeBoundary();
+      final runtime = ref.read(localContentRuntimeProvider);
+      if (runtime?.store == null) throw const PackDownloadFailure('storage');
+      await runtime!.store!.removeDownload(
+        pack.id,
+        expectedRevision: pack.revision,
+        checkCancelled: _safeBoundary,
+      );
+      await _refreshManagement(runtime);
+      if (!_alive) return;
+      state = PackUpdateBrowseState(
+        statuses: Map.unmodifiable({...state.statuses}..remove(pack.id)),
+        checkedAt: state.checkedAt,
+        updatedAt: state.updatedAt,
+      );
+    },
+    online: false,
+    actionName: 'remove',
+  );
+
+  Future<void> cleanupStorage() => _run(
+    null,
+    (_) async {
+      _safeBoundary();
+      final runtime = ref.read(localContentRuntimeProvider);
+      final store = runtime?.store;
+      if (store == null) throw const PackDownloadFailure('storage');
+      await runtime!.releasePlayback();
+      await store.recoverInterruptedDownloads();
+      _safeBoundary();
+      await store.cleanupRetired();
+      if (!_alive) return;
+      state = PackUpdateBrowseState(
+        statuses: state.statuses,
+        checkedAt: state.checkedAt,
+        updatedAt: state.updatedAt,
+      );
+    },
+    online: false,
+    actionName: 'cleanup',
+  );
+
+  void _safeBoundary() {
+    _cancellation?.throwIfCancelled();
+    if (!_alive || ref.read(gameplayNetworkBlockedProvider)) {
+      throw const PackDownloadFailure('cancelled');
+    }
+  }
+
+  Future<void> _refreshManagement(LocalContentRuntime runtime) async {
+    await runtime.refreshRetirements();
+    if (!_alive) return;
+    ref.invalidate(contentRepositoryProvider);
+    await runtime.releasePlayback();
+    try {
+      await runtime.reloadInstalled();
+    } catch (_) {
+      throw const PackDownloadFailure('projection-failed');
+    }
+    if (!_alive) return;
+    ref.invalidate(contentRepositoryProvider);
+    try {
+      await runtime.store!.cleanupRetired();
+    } on FileSystemException {
+      /* Retry bounded cleanup at Home. */
+    }
   }
 
   Future<void> _run(
     String? packId,
-    Future<void> Function(PackUpdateRepository) action,
-  ) {
+    Future<void> Function(PackUpdateRepository?) action, {
+    bool online = true,
+    String actionName = 'check',
+  }) {
     if (!_alive) return Future.value();
     if (state.busy) return _pending ?? Future.value();
     final blocked = ref.read(gameplayNetworkBlockedProvider);
@@ -153,16 +254,30 @@ class PackUpdateController extends Notifier<PackUpdateBrowseState> {
       updatedAt: state.updatedAt,
       busy: true,
       packId: packId,
+      action: actionName,
     );
     unawaited(() async {
       try {
-        final repository = ref.read(packUpdateRepositoryProvider);
-        if (repository == null) {
+        final repository = online
+            ? ref.read(packUpdateRepositoryProvider)
+            : null;
+        if (online && repository == null) {
           throw const PackDownloadFailure('updates-unavailable');
         }
         await action(repository);
       } on PackDownloadFailure catch (error) {
         if (_alive) _error(error.code);
+      } on FileSystemException catch (error) {
+        if (_alive) {
+          _error(
+            {28, 112}.contains(error.osError?.errorCode) ||
+                    error.message.toLowerCase().contains('no space')
+                ? 'no-space'
+                : 'storage',
+          );
+        }
+      } on StateError {
+        if (_alive) _error('content-changed');
       } catch (_) {
         if (_alive) _error('update-failed');
       } finally {

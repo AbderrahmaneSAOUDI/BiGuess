@@ -7,6 +7,7 @@ import '../../../domain/models/update_decision.dart';
 import '../../../domain/models/update_state.dart';
 import '../../../providers/topic_pack_providers.dart';
 import '../../../providers/pack_update_controller.dart';
+import '../../../providers/local_pack_management_providers.dart';
 import '../packs/installed_packs_screen.dart';
 import '../../../providers/catalog_controller.dart';
 import '../../widgets/common/catalog_status.dart';
@@ -32,6 +33,8 @@ class _TopicsScreenState extends ConsumerState<TopicsScreen> {
   @override
   void initState() {
     super.initState();
+    // Own this listener in the Home scope, not the temporary setup override.
+    ref.read(playbackLeaseLifecycleProvider);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !ref.read(automaticUpdateChecksProvider)) return;
       ref.read(updateControllerProvider.notifier).checkForUpdates(silent: true);
@@ -84,6 +87,8 @@ class _TopicsScreenState extends ConsumerState<TopicsScreen> {
     final topics = ref.watch(browseTopicsProvider);
     final catalog = ref.watch(catalogBrowseProvider).snapshot;
     final installedDownloads = ref.watch(installedDownloadPacksProvider);
+    final retirements = ref.watch(packRetirementsProvider);
+    final storageFailure = ref.watch(localContentRuntimeProvider)?.failure;
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final themeMode = ref.watch(themeNotifierProvider);
@@ -129,7 +134,15 @@ class _TopicsScreenState extends ConsumerState<TopicsScreen> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       const CatalogStatus(),
-                      if (installedDownloads.isNotEmpty)
+                      if (storageFailure != null)
+                        const Padding(
+                          padding: EdgeInsets.only(bottom: 16),
+                          child: Text(
+                            'Downloaded content could not be opened. Saved files were kept. Restart the app or free some storage and try again.',
+                          ),
+                        ),
+                      if (installedDownloads.isNotEmpty ||
+                          retirements.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(bottom: 16),
                           child: OutlinedButton.icon(

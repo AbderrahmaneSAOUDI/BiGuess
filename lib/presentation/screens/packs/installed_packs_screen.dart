@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../data/updates/pack_update_repository.dart';
+import '../../../domain/models/pack.dart';
+import '../../../providers/local_pack_management_providers.dart';
 import '../../../providers/content_transfer_gate.dart';
 import '../../../providers/gameplay_network_gate.dart';
 import '../../../providers/pack_update_controller.dart';
@@ -14,6 +16,7 @@ class InstalledPacksScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final packs = ref.watch(installedDownloadPacksProvider);
     final state = ref.watch(packUpdatesProvider);
+    final retirements = ref.watch(packRetirementsProvider);
     final blocked = ref.watch(gameplayNetworkBlockedProvider);
     final canRequest =
         !blocked &&
@@ -32,12 +35,24 @@ class InstalledPacksScreen extends ConsumerWidget {
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 FilledButton.icon(
-                  onPressed: canRequest && packs.isNotEmpty
+                  onPressed:
+                      canRequest &&
+                          (packs.isNotEmpty ||
+                              retirements.any(
+                                (r) =>
+                                    r.publicSyncEligible && !r.isAuthoritative,
+                              ))
                       ? controller.check
                       : null,
                   icon: const Icon(Icons.refresh),
                   label: const Text('Check for updates'),
                 ),
+                if (retirements.isNotEmpty)
+                  TextButton.icon(
+                    onPressed: canRequest ? controller.cleanupStorage : null,
+                    icon: const Icon(Icons.cleaning_services_outlined),
+                    label: const Text('Clean up storage'),
+                  ),
                 if (state.busy)
                   TextButton(
                     onPressed: controller.cancel,
@@ -47,7 +62,7 @@ class InstalledPacksScreen extends ConsumerWidget {
             ),
             const SizedBox(height: 12),
             const Text(
-              'Updates are optional. Your installed Packs stay ready offline until you choose Update.',
+              'Updates are optional. Manual checks also apply server deletions here. Offline devices may keep copies until they reconnect and sync.',
             ),
             if (state.checkedAt != null)
               Text('Last checked: ${state.checkedAt!.toLocal()}'),
@@ -63,7 +78,11 @@ class InstalledPacksScreen extends ConsumerWidget {
                     : null,
               ),
               Text(
-                state.packId == null
+                state.action == 'remove'
+                    ? 'Removing download…'
+                    : state.action == 'cleanup'
+                    ? 'Cleaning private storage…'
+                    : state.packId == null
                     ? 'Checking for updates…'
                     : state.progress == null
                     ? 'Preparing update…'
@@ -87,7 +106,7 @@ class InstalledPacksScreen extends ConsumerWidget {
               const Padding(
                 padding: EdgeInsets.only(top: 24),
                 child: Text(
-                  'No downloaded Packs yet. Choose a Topic to download a Pack.',
+                  'No downloaded Packs. Choose a Topic to download a Pack.',
                 ),
               ),
             for (final pack in packs)
@@ -118,6 +137,21 @@ class InstalledPacksScreen extends ConsumerWidget {
                           ),
                           Text('Installed · revision ${pack.revision}'),
                           Text(label),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: TextButton.icon(
+                              key: ValueKey('remove-${pack.id}'),
+                              onPressed: canRequest
+                                  ? () => _confirmRemove(
+                                      context,
+                                      controller,
+                                      pack,
+                                    )
+                                  : null,
+                              icon: const Icon(Icons.delete_outline),
+                              label: const Text('Remove Download'),
+                            ),
+                          ),
                           if (status == PackUpdateAvailability.updateAvailable)
                             Align(
                               alignment: Alignment.centerLeft,
@@ -136,15 +170,81 @@ class InstalledPacksScreen extends ConsumerWidget {
                   );
                 },
               ),
+            for (final record in retirements)
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        record.name,
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      Text(
+                        record.isAuthoritative
+                            ? 'Deleted by publisher'
+                            : 'Download removed',
+                      ),
+                      Text(
+                        record.isAuthoritative
+                            ? 'No longer playable or available to download on this device.'
+                            : 'Download slot freed. You can download it again from its Topic if it is still published.',
+                      ),
+                      if (!record.isAuthoritative && record.publicSyncEligible)
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton(
+                            onPressed: blocked
+                                ? null
+                                : () => Navigator.of(
+                                    context,
+                                  ).popUntil((route) => route.isFirst),
+                            child: const Text('Browse downloads'),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
           ],
         ),
       ),
     );
   }
 
+  Future<void> _confirmRemove(
+    BuildContext context,
+    PackUpdateController controller,
+    Pack pack,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove Download?'),
+        content: Text(
+          'Remove "${pack.name}" from this device to free a download slot? You can download it again if it is still published. This does not delete content from the server.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Keep Download'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Remove Download'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && context.mounted) {
+      await controller.removeDownload(pack);
+    }
+  }
+
   String _error(String code) => switch (code) {
     'cancelled' =>
-      'Update cancelled. Check or choose Update again when ready. Installed content remains available.',
+      'Operation cancelled before completion. Your saved local state is retained.',
     'gameplay-active' => 'Return to Packs before checking or updating content.',
     'transfer-busy' =>
       'Wait for the current download to finish, or cancel it before checking for updates.',
@@ -152,8 +252,11 @@ class InstalledPacksScreen extends ConsumerWidget {
       'Online updates are unavailable. Installed Packs remain ready offline.',
     'delta-unavailable' =>
       'Incremental history is unavailable for this Pack. Its installed revision remains ready offline.',
-    'no-space' =>
-      'Not enough private storage. Free some space and choose Update again.',
+    'no-space' => 'Not enough private storage. Free some space and try again.',
+    'storage' =>
+      'Private storage could not be changed. Your last committed local state is retained. Try again.',
+    'content-changed' =>
+      'Local content changed during this operation. Check again before retrying.',
     'untrusted-key' =>
       'The publisher key is not trusted by this app. The update was not installed.',
     'corrupt' =>
@@ -161,7 +264,7 @@ class InstalledPacksScreen extends ConsumerWidget {
     'timeout' || 'offline' =>
       'Online updates could not be reached. Check your connection and retry. Installed Packs remain ready offline.',
     'projection-failed' =>
-      'The verified update was saved, but the local view could not be refreshed. Restart the app to reopen it.',
+      'The storage change was saved, but the local view could not be refreshed. Restart the app to reopen it.',
     _ =>
       'The update could not be checked or installed. Check for updates again. Installed content remains available.',
   };

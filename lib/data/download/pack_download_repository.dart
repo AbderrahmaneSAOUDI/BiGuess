@@ -9,6 +9,7 @@ import 'pack_publication_verifier.dart';
 import '../catalog/catalog_models.dart';
 import '../local/local_pack_file.dart';
 import '../local/local_pack_store.dart';
+import '../local/pack_tombstone.dart';
 
 enum PackDownloadPhase { downloading, verifying, installing }
 
@@ -108,6 +109,10 @@ class HttpPackDownloadRepository implements PackDownloadRepository {
       token.throwIfCancelled();
       catalogId(summary.id);
       catalogId(summary.topicId);
+      if (await store.readTombstone(summary.id) != null) {
+        throw PackDeletedException();
+      }
+      token.throwIfCancelled();
       final prefix = '/content/v1/packs/${Uri.encodeComponent(summary.id)}';
       final descriptor = _json(
         await _bytes(base.resolve('$prefix/download'), 64 * 1024, token: token),
@@ -269,6 +274,8 @@ class HttpPackDownloadRepository implements PackDownloadRepository {
           {28, 112}.contains(error.osError?.errorCode) ||
           error.message.toLowerCase().contains('no space');
       throw PackDownloadFailure(noSpace ? 'no-space' : 'storage');
+    } on PackDeletedException {
+      throw const PackDownloadFailure('deleted');
     } on StateError {
       throw const PackDownloadFailure('limit');
     } on FormatException {

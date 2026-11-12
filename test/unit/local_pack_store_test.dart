@@ -143,6 +143,7 @@ void main() {
     expect(files.map((file) => p.basename(file.path)).toSet(), {
       'manifest.json',
       PrivatePackImages.fileName,
+      '.playback.lock',
     });
     expect(
       installed.cards.every(

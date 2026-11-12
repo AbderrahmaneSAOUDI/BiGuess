@@ -10,6 +10,7 @@ import 'catalog_controller.dart';
 import 'topic_pack_providers.dart';
 import 'gameplay_network_gate.dart';
 import 'content_transfer_gate.dart';
+import 'local_pack_management_providers.dart';
 
 /// Build-pinned public SPKI keys, never learned from downloaded content.
 final packDownloadKeysProvider = Provider<Map<String, String>>((ref) {
@@ -93,6 +94,10 @@ class PackDownloadController extends Notifier<Map<String, PackDownloadState>> {
   /// jobs are memory-only: a restart requires a new user action, never HTTP.
   Future<void> download(CatalogPackSummary summary) {
     if (!_alive) return Future.value();
+    if (ref.read(deletedPackIdsProvider).contains(summary.id)) {
+      _set(summary.id, const PackDownloadState(error: 'deleted'));
+      return Future.value();
+    }
     if (ref.read(gameplayNetworkBlockedProvider)) {
       _set(summary.id, const PackDownloadState(error: 'gameplay-active'));
       return Future.value();

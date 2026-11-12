@@ -42,6 +42,7 @@ void main() {
   var objectBytes = 0;
   var mode = '';
   Completer<void>? arrived;
+  List<Map<String, dynamic>>? revisionResults;
 
   Future<Uint8List> encode(
     Map<String, dynamic> manifest,
@@ -99,6 +100,7 @@ void main() {
     objectBytes = 0;
     mode = '';
     arrived = null;
+    revisionResults = null;
     temp = await Directory.systemTemp.createTemp('incremental-pack-');
     store = LocalPackStore(Directory('${temp.path}/packs'));
     final fixture = LocalPackFile.decode(
@@ -243,21 +245,30 @@ void main() {
                 as Map<String, dynamic>,
           );
           response.headers.contentType = ContentType.json;
+          if (mode == 'cancel-check') {
+            response.write('{"protocolVersion":1,');
+            await response.flush();
+            arrived?.complete();
+            await response.done;
+            return;
+          }
           response.write(
             jsonEncode({
               'protocolVersion': 1,
-              'results': [
-                {
-                  'packId': 'fixture-pack',
-                  'status': mode == 'unchanged'
-                      ? 'unchanged'
-                      : 'updateAvailable',
-                  'revision': mode == 'unchanged' ? 1 : 2,
-                  'manifestSha256': mode == 'unchanged'
-                      ? original.manifest.digest
-                      : statement['manifestSha256'],
-                },
-              ],
+              'results':
+                  revisionResults ??
+                  [
+                    {
+                      'packId': 'fixture-pack',
+                      'status': mode == 'unchanged'
+                          ? 'unchanged'
+                          : 'updateAvailable',
+                      'revision': mode == 'unchanged' ? 1 : 2,
+                      'manifestSha256': mode == 'unchanged'
+                          ? original.manifest.digest
+                          : statement['manifestSha256'],
+                    },
+                  ],
             }),
           );
         } else if (request.uri.path.endsWith('/delta')) {
@@ -570,6 +581,200 @@ void main() {
       });
       expect(jsonEncode(posted), isNot(contains('private-legacy-pack')));
       expect(jsonEncode(posted), isNot(contains('private-owner-topic')));
+    },
+  );
+  Map<String, dynamic> deletion({
+    String packId = 'fixture-pack',
+    Object revision = 3,
+    Object deletedAt = '2026-11-12T12:00:00.000Z',
+    Object reason = 'administrative_deletion',
+  }) => {
+    'packId': packId,
+    'status': 'deleted',
+    'tombstone': {
+      'packId': packId,
+      'revision': revision,
+      'deletedAt': deletedAt,
+      'reason': reason,
+    },
+  };
+
+  test(
+    'a newer exact tombstone is exposed with trusted origin but check never retires content',
+    () async {
+      revisionResults = [deletion()];
+      final status = (await repository.check()).single;
+      expect(status.state, PackUpdateAvailability.deleted);
+      expect(status.installedRevision, 1);
+      expect(status.revision, 3);
+      expect(status.tombstone!.packId, 'fixture-pack');
+      expect(status.tombstone!.revision, 3);
+      expect(status.tombstone!.deletedAt, DateTime.utc(2026, 11, 12, 12));
+      expect(status.tombstone!.sourceOrigin, origin.origin);
+      expect(status.tombstone!.reason, 'administrative_deletion');
+      await assertPrevious();
+      expect(requests, ['/content/v1/sync/revisions']);
+    },
+  );
+
+  test(
+    'unavailable and unknown statuses never invent a tombstone or retire files',
+    () async {
+      for (final state in ['unavailable', 'unknown']) {
+        revisionResults = [
+          {'packId': 'fixture-pack', 'status': state},
+        ];
+        final status = (await repository.check()).single;
+        expect(status.tombstone, isNull);
+        expect(
+          status.state,
+          state == 'unavailable'
+              ? PackUpdateAvailability.unavailable
+              : PackUpdateAvailability.unknown,
+        );
+        await assertPrevious();
+      }
+    },
+  );
+
+  final invalidDeletions = <String, Map<String, dynamic> Function()>{
+    'stale revision': () => deletion(revision: 1),
+    'fractional revision': () => deletion(revision: 3.0),
+    'wrong Pack': () => {
+      ...deletion(),
+      'tombstone': {
+        ...deletion()['tombstone'] as Map<String, dynamic>,
+        'packId': 'guessed-other',
+      },
+    },
+    'local date': () => deletion(deletedAt: '2026-11-12T12:00:00'),
+    'offset date': () => deletion(deletedAt: '2026-11-12T13:00:00+01:00'),
+    'overflow date': () => deletion(deletedAt: '2026-02-30T12:00:00Z'),
+    'overflow time': () => deletion(deletedAt: '2026-11-12T24:00:00Z'),
+    'wrong reason': () => deletion(reason: 'catalog_absence'),
+    'forged origin': () => {
+      ...deletion(),
+      'tombstone': {
+        ...deletion()['tombstone'] as Map<String, dynamic>,
+        'sourceOrigin': 'https://evil.example',
+      },
+    },
+  };
+  for (final entry in invalidDeletions.entries) {
+    test(
+      'invalid authoritative deletion ${entry.key} preserves installed content',
+      () async {
+        revisionResults = [entry.value()];
+        await expectLater(repository.check(), failure('corrupt'));
+        await assertPrevious();
+      },
+    );
+  }
+
+  Future<InstalledLocalPack> secondPublicPack() async {
+    final manifest = copy(baseManifest);
+    manifest['pack']['id'] = 'other-pack';
+    for (final card in manifest['cards'] as List) {
+      card['id'] = 'other-${card['id']}';
+      card['packId'] = 'other-pack';
+    }
+    for (final rights in manifest['provenance']['cardRights'] as List) {
+      rights['id'] = 'other-${rights['id']}';
+    }
+    final source = await File('${temp.path}/other-public.biguesspack')
+        .writeAsBytes(
+          await encode(manifest, {
+            for (final descriptor in manifest['objects'] as List)
+              descriptor['key'] as String: objects[descriptor['key']]!,
+          }),
+        );
+    return store.install(source);
+  }
+
+  test(
+    'a malformed later result cannot expose a partially valid tombstone list',
+    () async {
+      final other = await secondPublicPack();
+      final validFirst = deletion();
+      final unknownOther = {'packId': 'other-pack', 'status': 'unknown'};
+      final cases = <List<Map<String, dynamic>>>[
+        [validFirst],
+        [validFirst, validFirst],
+        [unknownOther, validFirst],
+        [validFirst, deletion(packId: 'other-pack', revision: 1)],
+      ];
+      for (final invalid in cases) {
+        revisionResults = invalid;
+        await expectLater(repository.check(), failure('corrupt'));
+        await assertPrevious();
+        expect(
+          (await store.readInstalled('other-pack'))!.manifest.digest,
+          other.manifest.digest,
+        );
+      }
+    },
+  );
+
+  test(
+    'cancelled incomplete Home sync returns no deletion result and keeps prior files',
+    () async {
+      mode = 'cancel-check';
+      arrived = Completer<void>();
+      final token = PackDownloadCancellation();
+      final pending = repository.check(cancellation: token);
+      final rejected = expectLater(pending, failure('cancelled'));
+      await arrived!.future.timeout(const Duration(seconds: 2));
+      token.cancel();
+      await rejected;
+      await assertPrevious();
+      expect(posted.length, 1);
+    },
+  );
+  test(
+    'manual sync includes a user-removed public identity and exposes later deletion without applying it',
+    () async {
+      await store.removeDownload(
+        'fixture-pack',
+        expectedRevision: 1,
+        expectedDigest: original.manifest.digest,
+      );
+      expect(await store.readInstalled('fixture-pack'), isNull);
+      revisionResults = [deletion()];
+      final status = (await repository.check()).single;
+      expect(posted.single['packs'], [
+        {'packId': 'fixture-pack', 'revision': 1},
+      ]);
+      expect(status.installedRevision, 1);
+      expect(status.tombstone!.revision, 3);
+      final removed = (await store.readRetirements()).single;
+      expect(removed.publicSyncEligible, isTrue);
+      expect(removed.tombstone, isNull);
+      expect(await store.readInstalled('fixture-pack'), isNull);
+    },
+  );
+
+  test(
+    'user-removed local-only identities are excluded from mixed public checks',
+    () async {
+      final private = await store.install(await developmentPack());
+      await store.removeDownload(
+        'private-legacy-pack',
+        expectedRevision: 1,
+        expectedDigest: private.manifest.digest,
+      );
+      revisionResults = [
+        {'packId': 'fixture-pack', 'status': 'unknown'},
+      ];
+      expect((await repository.check()).single.packId, 'fixture-pack');
+      expect(posted.single['packs'], [
+        {'packId': 'fixture-pack', 'revision': 1},
+      ]);
+      expect(jsonEncode(posted), isNot(contains('private-legacy-pack')));
+      expect(
+        (await store.readRetirements()).single.publicSyncEligible,
+        isFalse,
+      );
+      await assertPrevious();
     },
   );
 }

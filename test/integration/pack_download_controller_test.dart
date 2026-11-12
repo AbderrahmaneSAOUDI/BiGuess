@@ -13,6 +13,7 @@ import 'package:archive/archive.dart';
 import 'dart:convert';
 import 'package:biguess/providers/pack_download_controller.dart';
 import 'package:biguess/providers/topic_pack_providers.dart';
+import 'package:biguess/providers/local_pack_management_providers.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -90,6 +91,7 @@ void main() {
   });
   tearDown(() async {
     container.dispose();
+    await runtime.releasePlayback();
     runtime.close();
     await directory.delete(recursive: true);
   });
@@ -278,6 +280,11 @@ void main() {
       );
       await runtime.reloadInstalled();
       final content = container.read(contentRepositoryProvider);
+      container.read(playbackLeaseLifecycleProvider);
+      final retained = (await runtime.verifyForPlay(
+        topicId: 'fixture-topic',
+        packIds: ['fixture-pack'],
+      ))!;
       final session = container.read(gameSessionProvider.notifier);
       session.configure(
         GameSessionConfiguration(
@@ -287,9 +294,9 @@ void main() {
         ),
       );
       session.start(
-        topic: content.getTopics().single,
-        installedPacks: content.getPacksForTopic('fixture-topic'),
-        installedCards: content.getInstalledCardsForPack('fixture-pack')!,
+        topic: retained.topic,
+        installedPacks: retained.packs,
+        installedCards: retained.installedCards!,
       );
       final before = container.read(gameSessionProvider);
       final archive = ZipDecoder().decodeBytes(

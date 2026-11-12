@@ -10,6 +10,7 @@ import '../download/pack_download_repository.dart';
 import '../download/pack_publication_verifier.dart';
 import '../local/local_pack_file.dart';
 import '../local/local_pack_store.dart';
+import '../local/pack_tombstone.dart';
 import '../local/private_pack_images.dart';
 
 enum PackUpdateAvailability {
@@ -27,12 +28,20 @@ class PackUpdateStatus {
     required this.state,
     this.revision,
     this.manifestSha256,
+    this.tombstone,
   });
   final String packId;
   final int installedRevision;
   final PackUpdateAvailability state;
   final int? revision;
   final String? manifestSha256;
+  final PackTombstone? tombstone;
+}
+
+class _KnownPackRevision {
+  const _KnownPackRevision(this.packId, this.revision, this.digest);
+  final String packId, digest;
+  final int revision;
 }
 
 abstract interface class PackUpdateRepository {
@@ -103,6 +112,8 @@ class HttpPackUpdateRepository implements PackUpdateRepository {
       throw const PackDownloadFailure('corrupt');
     } on ArgumentError {
       throw const PackDownloadFailure('corrupt');
+    } on PackDeletedException {
+      throw const PackDownloadFailure('deleted');
     } on StateError {
       throw const PackDownloadFailure('limit');
     } finally {
@@ -116,13 +127,31 @@ class HttpPackUpdateRepository implements PackUpdateRepository {
     PackDownloadCancellation? cancellation,
   }) => _run(cancellation, (token) async {
     // Local development imports are not public distribution identities. Never
-    // disclose their IDs to the anonymous revision endpoint.
-    final installed = (await store.readAllInstalled())
-        .where(
-          (pack) =>
-              pack.manifest.toJson()['provenance']['mode'] == 'cleared-test',
-        )
-        .toList();
+    // disclose their IDs to the anonymous revision endpoint. User-removed
+    // public Packs remain known so a later manual sync can learn a tombstone.
+    final known = <String, _KnownPackRevision>{
+      for (final pack in await store.readAllInstalled())
+        if (pack.manifest.toJson()['provenance']['mode'] == 'cleared-test')
+          pack.manifest.pack.id: _KnownPackRevision(
+            pack.manifest.pack.id,
+            pack.manifest.pack.revision,
+            pack.manifest.digest,
+          ),
+    };
+    for (final removed in await store.readRetirements()) {
+      if (removed.publicSyncEligible && removed.tombstone == null) {
+        known.putIfAbsent(
+          removed.packId,
+          () => _KnownPackRevision(
+            removed.packId,
+            removed.installedRevision,
+            removed.manifestSha256,
+          ),
+        );
+      }
+    }
+    final installed = known.values.toList()
+      ..sort((a, b) => a.packId.compareTo(b.packId));
     token.throwIfCancelled();
     if (installed.length > 10000) throw const PackDownloadFailure('limit');
     final statuses = <PackUpdateStatus>[];
@@ -137,10 +166,7 @@ class HttpPackUpdateRepository implements PackUpdateRepository {
           'protocolVersion': 1,
           'packs': [
             for (final pack in batch)
-              {
-                'packId': pack.manifest.pack.id,
-                'revision': pack.manifest.pack.revision,
-              },
+              {'packId': pack.packId, 'revision': pack.revision},
           ],
         },
       );
@@ -153,9 +179,9 @@ class HttpPackUpdateRepository implements PackUpdateRepository {
         throw const PackDownloadFailure('corrupt');
       }
       for (var i = 0; i < batch.length; i++) {
-        final old = batch[i].manifest;
+        final old = batch[i];
         final row = LocalPackManifest.object(envelope['results'][i]);
-        if (row['packId'] != old.pack.id) {
+        if (row['packId'] != old.packId) {
           throw const PackDownloadFailure('corrupt');
         }
         final state = row['status'];
@@ -165,15 +191,15 @@ class HttpPackUpdateRepository implements PackUpdateRepository {
           if (revision is! int ||
               !_digest(row['manifestSha256']) ||
               (state == 'unchanged'
-                  ? revision != old.pack.revision ||
+                  ? revision != old.revision ||
                         row['manifestSha256'] != old.digest
-                  : revision <= old.pack.revision)) {
+                  : revision <= old.revision)) {
             throw const PackDownloadFailure('corrupt');
           }
           statuses.add(
             PackUpdateStatus(
-              packId: old.pack.id,
-              installedRevision: old.pack.revision,
+              packId: old.packId,
+              installedRevision: old.revision,
               state: state == 'unchanged'
                   ? PackUpdateAvailability.upToDate
                   : PackUpdateAvailability.updateAvailable,
@@ -183,34 +209,29 @@ class HttpPackUpdateRepository implements PackUpdateRepository {
           );
         } else if (state == 'deleted') {
           _record(row, {'packId', 'status', 'tombstone'});
-          final tombstone = LocalPackManifest.record(row['tombstone'], {
-            'packId',
-            'revision',
-            'deletedAt',
-            'reason',
-          });
-          if (tombstone['packId'] != old.pack.id ||
-              tombstone['revision'] is! int ||
-              (tombstone['revision'] as int) <= old.pack.revision ||
-              tombstone['reason'] != 'administrative_deletion' ||
-              tombstone['deletedAt'] is! String ||
-              !(tombstone['deletedAt'] as String).endsWith('Z') ||
-              DateTime.tryParse(tombstone['deletedAt'] as String) == null) {
+          final tombstone = PackTombstone.fromWire(
+            LocalPackManifest.object(row['tombstone']),
+            sourceOrigin: base.origin,
+          );
+          if (tombstone.packId != old.packId ||
+              tombstone.revision <= old.revision) {
             throw const PackDownloadFailure('corrupt');
           }
           statuses.add(
             PackUpdateStatus(
-              packId: old.pack.id,
-              installedRevision: old.pack.revision,
+              packId: old.packId,
+              installedRevision: old.revision,
               state: PackUpdateAvailability.deleted,
+              revision: tombstone.revision,
+              tombstone: tombstone,
             ),
           );
         } else if (state == 'unavailable' || state == 'unknown') {
           _record(row, {'packId', 'status'});
           statuses.add(
             PackUpdateStatus(
-              packId: old.pack.id,
-              installedRevision: old.pack.revision,
+              packId: old.packId,
+              installedRevision: old.revision,
               state: state == 'unavailable'
                   ? PackUpdateAvailability.unavailable
                   : PackUpdateAvailability.unknown,

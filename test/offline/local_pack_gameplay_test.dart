@@ -238,7 +238,10 @@ void main() {
           expect(find.text('Game complete'), findsOneWidget);
         }
         expect(find.text('Return to Packs'), findsOneWidget);
-        await tester.tap(find.text('Return to Packs'));
+        await tester.runAsync(() async {
+          await tester.tap(find.text('Return to Packs'));
+          await runtime.releasePlayback();
+        });
         await tester.pump();
         await tester.pump(const Duration(seconds: 1));
         expect(find.text('Original colors'), findsOneWidget);

@@ -113,6 +113,8 @@ class _DownloadSheet extends ConsumerWidget {
   }
 
   String _error(String code) => switch (code) {
+    'deleted' =>
+      'This Pack was deleted by the publisher and is no longer available to download.',
     'cancelled' =>
       'Download cancelled. Existing installed Packs remain available. Retry starts a fresh download.',
     'queue-full' =>

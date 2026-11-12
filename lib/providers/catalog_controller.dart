@@ -16,6 +16,7 @@ import '../domain/use_cases/select_packs_use_case.dart';
 import 'pack_selection_controller.dart';
 import 'topic_pack_providers.dart';
 import 'gameplay_network_gate.dart';
+import 'local_pack_management_providers.dart';
 
 /// Public endpoint only. An empty default keeps existing local builds inert.
 final publicCatalogBaseUriProvider = Provider<Uri?>((ref) {
@@ -224,6 +225,7 @@ final browsePacksProvider = Provider.family<List<BrowsePack>, String>((
   final repository = ref.watch(contentRepositoryProvider);
   final options = ref.watch(packOptionsProvider(topicId));
   final snapshot = ref.watch(catalogBrowseProvider).snapshot;
+  final deletedIds = ref.watch(deletedPackIdsProvider);
   final remoteTopic = snapshot?.topics
       .where((t) => t.id == topicId)
       .firstOrNull;
@@ -255,6 +257,7 @@ final browsePacksProvider = Provider.family<List<BrowsePack>, String>((
   for (final pack in summaries.values) {
     final conflictingLocal = allLocal[pack.id];
     final unavailable =
+        deletedIds.contains(pack.id) ||
         !pack.available ||
         remoteTopic?.available == false ||
         pack.cardCount == 0 ||

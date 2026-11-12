@@ -9,6 +9,7 @@ import '../../../providers/game_session_controller.dart';
 import '../../../providers/gameplay_network_gate.dart';
 import '../../../providers/pack_download_controller.dart';
 import '../../../providers/pack_update_controller.dart';
+import '../../../providers/local_pack_management_providers.dart';
 import '../../../providers/catalog_controller.dart';
 import '../../controllers/update_controller.dart';
 import '../../../providers/game_settings_controller.dart';
@@ -71,6 +72,8 @@ class _GameConfigurationScreenState
       _starting = true;
       _startError = null;
     });
+    final localRuntime = ref.read(localContentRuntimeProvider);
+    ref.read(playbackLeaseLifecycleProvider);
     final preparing = ref.read(gameplayPreparingProvider.notifier);
     preparing.state = true;
     try {
@@ -93,7 +96,7 @@ class _GameConfigurationScreenState
         ref.read(updateControllerProvider.notifier).pauseForGameplay(),
       ]);
       if (!mounted) return;
-      final runtime = ref.read(localContentRuntimeProvider);
+      final runtime = localRuntime;
       if (runtime?.usesSqlite == true) {
         content = await runtime!.verifyForPlay(
           topicId: content!.topic.id,
@@ -132,6 +135,7 @@ class _GameConfigurationScreenState
         });
       }
     } finally {
+      if (!_enteredSession) await localRuntime?.releasePlayback();
       if (preparing.mounted) preparing.state = false;
       if (mounted && !_enteredSession) setState(() => _starting = false);
     }
