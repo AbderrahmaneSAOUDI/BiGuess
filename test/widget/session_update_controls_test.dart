@@ -27,7 +27,7 @@ class _CountingUpdates extends UpdateController {
       );
   int checks = 0;
   @override
-  Future<void> checkForUpdates({bool silent = false}) async {
+  Future<void> checkForUpdates() async {
     checks++;
   }
 }
@@ -46,9 +46,7 @@ void main() {
       ProviderScope(
         overrides: [
           gameplayNetworkBlockedProvider.overrideWithValue(blocked),
-          appVersionProvider.overrideWith(
-            (ref) async => '1.0.0',
-          ),
+          appVersionProvider.overrideWith((ref) async => '1.0.0'),
           updateControllerProvider.overrideWith((ref) => updates()),
         ],
         child: const MaterialApp(home: Scaffold(body: AboutGameTab())),

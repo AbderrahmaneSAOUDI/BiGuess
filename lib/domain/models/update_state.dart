@@ -79,7 +79,7 @@ class UpdateCompleted extends UpdateState {
   const UpdateCompleted([this.message = 'App is up to date']);
 }
 
-/// User chose to skip a non-mandatory update.
+/// User left or skipped an optional app update.
 class UpdateSkipped extends UpdateState {
   const UpdateSkipped();
 }

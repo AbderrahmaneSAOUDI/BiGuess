@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:crypto/crypto.dart' as hashes;
 import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 
@@ -114,35 +115,55 @@ class OtaInstallerService {
   /// Downloads the APK from [url], streaming progress via [onProgress].
   ///
   /// Writes to a `.tmp` file first and renames to `.apk` only after the
-  /// download completes successfully, preventing corrupted partial installs.
+  /// download completes successfully and any supplied SHA-256 matches.
+  /// The controller requires a publisher checksum for production APK updates.
   ///
   /// Returns the completed [File] handle to the APK on disk.
   Future<File> downloadApk(
     String url, {
     void Function(DownloadProgress)? onProgress,
+    String? expectedSha256,
   }) async {
-    _cancelToken = CancelToken();
-
-    final cacheDir = await _temporaryDirectory();
-    final tmpPath = '${cacheDir.path}/$_tempFileName';
-    final finalPath = '${cacheDir.path}/$_apkFileName';
-
-    // Remove leftover files from previous attempts
-    final tmpFile = File(tmpPath);
-    final finalFile = File(finalPath);
-    if (tmpFile.existsSync()) await tmpFile.delete();
-    if (finalFile.existsSync()) await finalFile.delete();
-
-    // Rolling speed tracker (keeps last 5 samples at ~500ms intervals)
-    final speedSamples = <double>[];
-    var lastSampleTime = DateTime.now();
-    var lastSampleBytes = 0;
+    if (_cancelToken != null) {
+      throw StateError('An APK download is already active');
+    }
+    if (expectedSha256 != null &&
+        !RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(expectedSha256)) {
+      throw const FormatException('Invalid APK SHA-256');
+    }
+    final token = CancelToken();
+    _cancelToken = token;
+    File? tmpFile;
+    File? finalFile;
+    var completed = false;
+    var ownsPaths = false;
+    void checkCancelled() {
+      if (token.isCancelled) throw token.cancelError!;
+    }
 
     try {
+      final cacheDir = await _temporaryDirectory();
+      final tmpPath = '${cacheDir.path}/$_tempFileName';
+      final finalPath = '${cacheDir.path}/$_apkFileName';
+
+      // Remove leftover files from previous attempts
+      tmpFile = File(tmpPath);
+      finalFile = File(finalPath);
+      checkCancelled();
+      ownsPaths = true;
+      if (tmpFile.existsSync()) await tmpFile.delete();
+      if (finalFile.existsSync()) await finalFile.delete();
+
+      // Rolling speed tracker (keeps last 5 samples at ~500ms intervals)
+      final speedSamples = <double>[];
+      var lastSampleTime = DateTime.now();
+      var lastSampleBytes = 0;
+
+      checkCancelled();
       await _dio.download(
         url,
         tmpPath,
-        cancelToken: _cancelToken,
+        cancelToken: token,
         onReceiveProgress: (received, total) {
           final now = DateTime.now();
           final elapsed = now.difference(lastSampleTime).inMilliseconds;
@@ -180,26 +201,43 @@ class OtaInstallerService {
         },
       );
 
-      // Atomic rename: tmp → final with copy fallback
-      File completed;
+      checkCancelled();
+      if (expectedSha256 != null) {
+        final digest = await hashes.sha256.bind(tmpFile.openRead()).first;
+        checkCancelled();
+        if (digest.toString() != expectedSha256.toLowerCase()) {
+          throw const FormatException('APK SHA-256 verification failed');
+        }
+      }
+      // Only verified, complete bytes become the installable cache file.
+      File result;
       try {
-        completed = await File(tmpPath).rename(finalPath);
+        result = await File(tmpPath).rename(finalPath);
       } catch (_) {
-        completed = await File(tmpPath).copy(finalPath);
+        result = await File(tmpPath).copy(finalPath);
         try {
           await File(tmpPath).delete();
         } catch (_) {}
       }
-      return completed;
+      checkCancelled();
+      completed = true;
+      return result;
     } finally {
-      _cancelToken = null;
       // Failed and cancelled transfers must not retain a partial APK.
-      if (await tmpFile.exists()) {
-        try {
+      try {
+        if (ownsPaths && tmpFile != null && await tmpFile.exists()) {
           await tmpFile.delete();
-        } catch (_) {
-          // Startup cleanup retries if the filesystem is temporarily busy.
         }
+        if (ownsPaths &&
+            !completed &&
+            finalFile != null &&
+            await finalFile.exists()) {
+          await finalFile.delete();
+        }
+      } on FileSystemException {
+        // The next explicit download retries cleanup if storage is busy.
+      } finally {
+        if (identical(_cancelToken, token)) _cancelToken = null;
       }
     }
   }
@@ -207,7 +245,6 @@ class OtaInstallerService {
   /// Cancels an in-flight download if one is active.
   void cancelDownload() {
     _cancelToken?.cancel('Download cancelled by user');
-    _cancelToken = null;
   }
 
   // ---------------------------------------------------------------------------

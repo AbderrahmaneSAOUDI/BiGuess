@@ -14,7 +14,8 @@ class UpdateNone extends UpdateDecision {
 ///
 /// Triggered when major/minor version changes or native code has changed.
 class UpdateFullApk extends UpdateDecision {
-  /// If `true`, the user cannot skip this update (version < minRequired).
+  /// Legacy policy hint retained for compatibility. The current app never
+  /// enforces mandatory upgrades; a future policy requires product approval.
   final bool mandatory;
 
   /// Direct download URL for the APK binary.

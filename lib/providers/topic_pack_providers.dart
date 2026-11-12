@@ -16,12 +16,9 @@ final localContentRuntimeProvider = Provider<LocalContentRuntime?>(
   (ref) => null,
 );
 
-/// Local-Pack play and the explicit offline demo never start update requests.
-/// Manual update actions remain available outside the gameplay flow.
-final automaticUpdateChecksProvider = Provider<bool>((ref) {
-  return !const bool.fromEnvironment('biguessOfflineDemo') &&
-      !(ref.watch(localContentRuntimeProvider)?.usesSqlite ?? false);
-});
+/// Compatibility binding for existing tests/consumers. Launch never checks app
+/// updates for any content source; explicit About actions own that transport.
+final automaticUpdateChecksProvider = Provider<bool>((ref) => false);
 
 /// Override this binding to swap local content sources without screen changes.
 final contentRepositoryProvider = Provider<ContentRepository>((ref) {

@@ -195,25 +195,22 @@ void main() {
       expect(fullApk.mandatory, isFalse);
     });
 
-    test(
-      'returns UpdateFullApk with mandatory=true when below minRequiredVersion',
-      () {
-        final local = SemVer.parse('0.29.0+1');
-        const remote = RemoteVersion(
-          latestVersion: '0.32.0',
-          buildNumber: 1,
-          minRequiredVersion: '0.30.0',
-          hasNativeChanges: false,
-          apkUrl: 'https://example.com/arm64.apk',
-          releaseNotes: 'Breaking update',
-        );
+    test('remote minimum version cannot require an unapproved app upgrade', () {
+      final local = SemVer.parse('0.29.0+1');
+      const remote = RemoteVersion(
+        latestVersion: '0.32.0',
+        buildNumber: 1,
+        minRequiredVersion: '0.30.0',
+        hasNativeChanges: false,
+        apkUrl: 'https://example.com/arm64.apk',
+        releaseNotes: 'Breaking update',
+      );
 
-        final decision = versionService.evaluateUpdate(local, remote);
-        expect(decision, isA<UpdateFullApk>());
-        final fullApk = decision as UpdateFullApk;
-        expect(fullApk.mandatory, isTrue);
-      },
-    );
+      final decision = versionService.evaluateUpdate(local, remote);
+      expect(decision, isA<UpdateFullApk>());
+      final fullApk = decision as UpdateFullApk;
+      expect(fullApk.mandatory, isFalse);
+    });
 
     test(
       'returns UpdateShorebirdPatch when pure patch bump without native changes and Shorebird is available',

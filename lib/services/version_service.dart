@@ -114,7 +114,7 @@ class VersionService {
   ///
   /// 1. **Up to date** — if `local >= remoteSemVer`, returns [UpdateNone].
   /// 2. **Full APK** — if remote is newer AND (major/minor bump or `hasNativeChanges`).
-  ///    Mandatory when local < `minRequiredVersion`. Resolves ABI-specific APK.
+  ///    Resolves ABI-specific APK; remote minimum-version hints do not impose a mandatory upgrade.
   /// 3. **Shorebird patch** — if remote patch > local patch with same
   ///    major.minor and no native changes.
   UpdateDecision evaluateUpdate(
@@ -124,7 +124,6 @@ class VersionService {
     bool isShorebirdAvailable = true,
   }) {
     final remoteSemVer = SemVer.parse(remote.latestVersion, remote.buildNumber);
-    final minRequired = SemVer.parse(remote.minRequiredVersion);
 
     // 1. Full APK path:
     // Required if remote has a newer major/minor, or if native code changed and remote is strictly newer than local,
@@ -137,12 +136,11 @@ class VersionService {
     if (hasNewerMajorOrMinor ||
         hasNewerNativeBuild ||
         needsFullApkDueToNoShorebird) {
-      final isMandatory = local < minRequired;
       final targetApkUrl = remote.resolveApkUrl(deviceAbis);
       final targetSha256 = remote.resolveSha256(deviceAbis);
 
       return UpdateFullApk(
-        mandatory: isMandatory,
+        mandatory: false,
         apkUrl: targetApkUrl,
         releaseNotes: remote.releaseNotes,
         latestVersion: remote.latestVersion,

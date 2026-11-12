@@ -46,6 +46,6 @@ Theme and legacy countdown/algorithm/hint settings remain in memory. Complex UI,
 
 ## Update and backend boundaries
 
-`automaticUpdateChecksProvider` suppresses the first-frame update request when SQLite local content or the offline-demo define is active. The bundled fallback retains its existing automatic updater behavior; About offers manual updates. Native Shorebird engine auto-checks are a separate release-policy concern. Do not infer zero native network traffic from ordinary host tests.
+Launch does not check app updates for any content source, including the bundled fallback. `automaticUpdateChecksProvider` remains a false compatibility binding. About offers explicit optional app-update checks and separate download/install actions; remote minimum-version hints cannot impose a mandatory upgrade. APK checksum verification precedes publication to the installer, and cached installer retries require the current verified decision. APK cache cleanup runs before an explicit download, independently of launch and Pack storage. `shorebird.yaml` disables native automatic checks; a new approved base binary and device validation are still required to establish native-engine behavior.
 
 `UpdateController` coordinates version/patch/APK services and update dialogs. `CloudDatabaseService` and `backend/biguess-api/` remain a separate unused game-record scaffold. Neither supplies gameplay content. Phase C–F catalog, Studio, remote download/sync, billing and final release gates remain future work.

@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
-import 'package:restart_app/restart_app.dart';
 import '../../../core/constants/app_constants.dart';
-import '../../../domain/models/update_decision.dart';
 import '../../../domain/models/update_state.dart';
 import '../../../providers/topic_pack_providers.dart';
 import '../../../providers/pack_update_controller.dart';
@@ -35,54 +33,10 @@ class _TopicsScreenState extends ConsumerState<TopicsScreen> {
     super.initState();
     // Own this listener in the Home scope, not the temporary setup override.
     ref.read(playbackLeaseLifecycleProvider);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !ref.read(automaticUpdateChecksProvider)) return;
-      ref.read(updateControllerProvider.notifier).checkForUpdates(silent: true);
-    });
   }
 
   @override
   Widget build(BuildContext context) {
-    ref.listen<UpdateState>(updateControllerProvider, (previous, next) {
-      if (!mounted) return;
-      if (next is UpdateAvailable) {
-        final isMandatory =
-            next.decision is UpdateFullApk &&
-            (next.decision as UpdateFullApk).mandatory;
-
-        if (isMandatory) {
-          // Immediately pop up the modal dialog for mandatory updates
-          UpdateDialog.show(context, isMandatory: true);
-        } else {
-          ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('🚀 BiGuess v${next.latestVersion} is available!'),
-              behavior: SnackBarBehavior.floating,
-              duration: const Duration(seconds: 8),
-              action: SnackBarAction(
-                label: 'Update',
-                onPressed: () => UpdateDialog.show(context),
-              ),
-            ),
-          );
-        }
-      } else if (next is UpdateCompleted && next.message.contains('Restart')) {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(next.message),
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 8),
-            action: SnackBarAction(
-              label: 'Restart',
-              onPressed: () => Restart.restartApp(),
-            ),
-          ),
-        );
-      }
-    });
-
     final repository = ref.watch(contentRepositoryProvider);
     final topics = ref.watch(browseTopicsProvider);
     final catalog = ref.watch(catalogBrowseProvider).snapshot;
@@ -497,12 +451,7 @@ class _TopicsAppBar extends ConsumerWidget implements PreferredSizeWidget {
               iconColor: Colors.amber,
               glowColor: Colors.amber,
               tooltip: 'Update v${updateState.latestVersion} Available',
-              onPressed: () => UpdateDialog.show(
-                context,
-                isMandatory:
-                    updateState.decision is UpdateFullApk &&
-                    (updateState.decision as UpdateFullApk).mandatory,
-              ),
+              onPressed: () => UpdateDialog.show(context),
             ),
           ),
         Padding(

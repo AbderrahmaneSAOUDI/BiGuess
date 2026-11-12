@@ -58,6 +58,7 @@ class _Ota implements OtaInstallerService {
   Future<File> downloadApk(
     String url, {
     void Function(DownloadProgress)? onProgress,
+    String? expectedSha256,
   }) async {
     downloads++;
     throw StateError('Unexpected APK request');
@@ -140,22 +141,30 @@ void main() {
     },
   );
 
-  test('pause during installer lookup never launches the next stage', () async {
-    final directory = await Directory.systemTemp.createTemp('update-gameplay-');
-    addTearDown(() => directory.delete(recursive: true));
-    final file = await File(
-      '${directory.path}/fixture.apk',
-    ).writeAsString('fixture');
-    ota.pendingFile = Completer<File?>();
-    final lookup = controller.launchDownloadedApk();
-    final pause = controller.pauseForGameplay();
-    ota.pendingFile!.complete(file);
-    await Future.wait([lookup, pause]);
-    expect(ota.installs, 0);
-    expect(controller.state, isA<UpdateSkipped>());
-    await controller.launchDownloadedApk();
-    expect(ota.installs, 0);
-  });
+  test(
+    'unbound cached APK is rejected before lookup or installation',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'update-gameplay-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final file = await File(
+        '${directory.path}/fixture.apk',
+      ).writeAsString('fixture');
+      ota.pendingFile = Completer<File?>();
+      await controller.launchDownloadedApk();
+      expect(controller.state, isA<UpdateError>());
+      expect((controller.state as UpdateError).canRetry, isFalse);
+      expect(ota.installs, 0);
+      final pause = controller.pauseForGameplay();
+      ota.pendingFile!.complete(file);
+      await pause;
+      expect(ota.installs, 0);
+      expect(controller.state, isA<UpdateSkipped>());
+      await controller.launchDownloadedApk();
+      expect(ota.installs, 0);
+    },
+  );
 
   test(
     'development signing guard still prevents version/APK network work',

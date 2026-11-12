@@ -290,7 +290,7 @@ class _AppUpdateCard extends ConsumerWidget {
               ),
               const SizedBox(width: 8),
               Text(
-                'Auto-Updates & Status',
+                'App updates',
                 style: TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.bold,
@@ -298,6 +298,11 @@ class _AppUpdateCard extends ConsumerWidget {
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'Downloaded Pack updates are managed separately from Home.',
+            style: TextStyle(fontSize: 12),
           ),
           const SizedBox(height: 10),
           _buildStatusContent(context, ref, controller, updateState, theme),
@@ -319,7 +324,7 @@ class _AppUpdateCard extends ConsumerWidget {
         children: [
           Expanded(
             child: Text(
-              'Instant OTA patches enabled',
+              'Optional app binary updates',
               style: TextStyle(
                 fontSize: 12,
                 color: theme.colorScheme.onSurfaceVariant,
@@ -327,7 +332,7 @@ class _AppUpdateCard extends ConsumerWidget {
             ),
           ),
           FilledButton.tonalIcon(
-            onPressed: () => controller.checkForUpdates(silent: false),
+            onPressed: () => controller.checkForUpdates(),
             icon: const Icon(Icons.refresh_rounded, size: 16),
             label: const Text('Check', style: TextStyle(fontSize: 12)),
             style: FilledButton.styleFrom(
@@ -437,7 +442,7 @@ class _AppUpdateCard extends ConsumerWidget {
           IconButton(
             icon: const Icon(Icons.refresh_rounded, size: 18),
             tooltip: 'Check again',
-            onPressed: () => controller.checkForUpdates(silent: false),
+            onPressed: () => controller.checkForUpdates(),
           ),
         ],
       ),

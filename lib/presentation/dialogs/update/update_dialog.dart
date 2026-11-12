@@ -11,10 +11,10 @@ class UpdateDialog extends ConsumerWidget {
   const UpdateDialog({super.key});
 
   /// Displays the [UpdateDialog] modally.
-  static Future<void> show(BuildContext context, {bool isMandatory = false}) {
+  static Future<void> show(BuildContext context) {
     return showDialog<void>(
       context: context,
-      barrierDismissible: !isMandatory,
+      barrierDismissible: true,
       builder: (_) => const UpdateDialog(),
     );
   }
@@ -25,21 +25,15 @@ class UpdateDialog extends ConsumerWidget {
     final updateState = ref.watch(updateControllerProvider);
     final controller = ref.read(updateControllerProvider.notifier);
 
-    final isMandatory =
-        updateState is UpdateAvailable &&
-        updateState.decision is UpdateFullApk &&
-        (updateState.decision as UpdateFullApk).mandatory;
-
-    return PopScope(
-      canPop: !isMandatory,
-      child: Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        backgroundColor: theme.colorScheme.surface,
-        elevation: 8,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 400),
-          child: Padding(
-            padding: const EdgeInsets.all(22),
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      backgroundColor: theme.colorScheme.surface,
+      elevation: 8,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 400),
+        child: Padding(
+          padding: const EdgeInsets.all(22),
+          child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -51,18 +45,12 @@ class UpdateDialog extends ConsumerWidget {
                       width: 44,
                       height: 44,
                       decoration: BoxDecoration(
-                        color: isMandatory
-                            ? theme.colorScheme.errorContainer
-                            : theme.colorScheme.primaryContainer,
+                        color: theme.colorScheme.primaryContainer,
                         borderRadius: BorderRadius.circular(14),
                       ),
                       child: Icon(
-                        isMandatory
-                            ? Icons.warning_amber_rounded
-                            : Icons.system_update_rounded,
-                        color: isMandatory
-                            ? theme.colorScheme.error
-                            : theme.colorScheme.primary,
+                        Icons.system_update_rounded,
+                        color: theme.colorScheme.primary,
                         size: 24,
                       ),
                     ),
@@ -72,7 +60,7 @@ class UpdateDialog extends ConsumerWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            isMandatory ? 'Required Update' : 'App Updates',
+                            'App Updates',
                             style: TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.bold,
@@ -90,11 +78,10 @@ class UpdateDialog extends ConsumerWidget {
                         ],
                       ),
                     ),
-                    if (!isMandatory)
-                      IconButton(
-                        icon: const Icon(Icons.close_rounded, size: 20),
-                        onPressed: () => Navigator.of(context).pop(),
-                      ),
+                    IconButton(
+                      icon: const Icon(Icons.close_rounded, size: 20),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 18),
@@ -108,14 +95,12 @@ class UpdateDialog extends ConsumerWidget {
                     ref,
                     updateState,
                     theme,
-                    isMandatory,
                   ),
                   UpdateDownloading() => _buildDownloadingState(
                     context,
                     controller,
                     updateState,
                     theme,
-                    isMandatory,
                   ),
                   UpdateInstalling() => _buildInstallingState(theme),
                   UpdatePatching() => _buildPatchingState(theme),
@@ -156,7 +141,7 @@ class UpdateDialog extends ConsumerWidget {
       UpdateInstalling() => 'Launching package installer...',
       UpdatePatching() => 'Downloading over-the-air patch...',
       UpdateRestarting() => 'Applying changes...',
-      UpdateCompleted() => 'Everything is up to date',
+      UpdateCompleted() => 'App update status',
       UpdateSkipped() => 'Update deferred',
       UpdateError() => 'Update check encountered an issue',
     };
@@ -174,7 +159,7 @@ class UpdateDialog extends ConsumerWidget {
     return Column(
       children: [
         Text(
-          'BiGuess automatically delivers patches and updates to keep your game fast and stable.',
+          'App updates are optional and separate from downloaded Pack updates. Check when you choose; installed Packs remain playable offline.',
           style: TextStyle(
             fontSize: 13,
             height: 1.4,
@@ -183,7 +168,7 @@ class UpdateDialog extends ConsumerWidget {
         ),
         const SizedBox(height: 20),
         FilledButton.icon(
-          onPressed: () => controller.checkForUpdates(silent: false),
+          onPressed: () => controller.checkForUpdates(),
           icon: const Icon(Icons.refresh_rounded, size: 18),
           label: const Text('Check for Updates Now'),
           style: FilledButton.styleFrom(
@@ -228,7 +213,6 @@ class UpdateDialog extends ConsumerWidget {
     WidgetRef ref,
     UpdateAvailable state,
     ThemeData theme,
-    bool isMandatory,
   ) {
     final isPatch = state.decision is UpdateShorebirdPatch;
 
@@ -239,41 +223,34 @@ class UpdateDialog extends ConsumerWidget {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           decoration: BoxDecoration(
-            color: isMandatory
-                ? theme.colorScheme.errorContainer.withValues(alpha: 0.3)
-                : theme.colorScheme.primaryContainer.withValues(alpha: 0.4),
+            color: theme.colorScheme.primaryContainer.withValues(alpha: 0.4),
             borderRadius: BorderRadius.circular(14),
             border: Border.all(
-              color: isMandatory
-                  ? theme.colorScheme.error.withValues(alpha: 0.4)
-                  : theme.colorScheme.primary.withValues(alpha: 0.2),
+              color: theme.colorScheme.primary.withValues(alpha: 0.2),
             ),
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                'v${state.currentVersion} → v${state.latestVersion}',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: isMandatory
-                      ? theme.colorScheme.error
-                      : theme.colorScheme.primary,
+              Expanded(
+                child: Text(
+                  'v${state.currentVersion} → v${state.latestVersion}',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: theme.colorScheme.primary,
+                  ),
                 ),
               ),
+              const SizedBox(width: 8),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
-                  color: isMandatory
-                      ? theme.colorScheme.error
-                      : theme.colorScheme.primary,
+                  color: theme.colorScheme.primary,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
-                  isPatch
-                      ? 'OTA Patch'
-                      : (isMandatory ? 'Required APK' : 'Split-ABI APK'),
+                  isPatch ? 'App patch' : 'App APK',
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.bold,
@@ -285,38 +262,6 @@ class UpdateDialog extends ConsumerWidget {
           ),
         ),
         const SizedBox(height: 14),
-
-        // Mandatory notice
-        if (isMandatory) ...[
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.errorContainer.withValues(alpha: 0.5),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.priority_high_rounded,
-                  size: 16,
-                  color: theme.colorScheme.error,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'This version is required to continue playing.',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: theme.colorScheme.onErrorContainer,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 14),
-        ],
 
         // Release notes box
         if (state.releaseNotes.isNotEmpty) ...[
@@ -369,11 +314,9 @@ class UpdateDialog extends ConsumerWidget {
             size: 18,
           ),
           label: Text(
-            isPatch ? 'Apply Instant Patch' : 'Download & Install APK',
+            isPatch ? 'Apply App Patch & Restart' : 'Download & Install APK',
           ),
           style: FilledButton.styleFrom(
-            backgroundColor: isMandatory ? theme.colorScheme.error : null,
-            foregroundColor: isMandatory ? theme.colorScheme.onError : null,
             padding: const EdgeInsets.symmetric(vertical: 14),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(14),
@@ -389,7 +332,6 @@ class UpdateDialog extends ConsumerWidget {
     UpdateController controller,
     UpdateDownloading state,
     ThemeData theme,
-    bool isMandatory,
   ) {
     final percent = (state.progress * 100).toStringAsFixed(0);
 
@@ -431,18 +373,16 @@ class UpdateDialog extends ConsumerWidget {
               ),
           ],
         ),
-        if (!isMandatory) ...[
-          const SizedBox(height: 16),
-          OutlinedButton(
-            onPressed: () => controller.skipUpdate(),
-            style: OutlinedButton.styleFrom(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
+        const SizedBox(height: 16),
+        OutlinedButton(
+          onPressed: () => controller.skipUpdate(),
+          style: OutlinedButton.styleFrom(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
             ),
-            child: const Text('Cancel Download'),
           ),
-        ],
+          child: const Text('Cancel Download'),
+        ),
       ],
     );
   }
@@ -475,7 +415,7 @@ class UpdateDialog extends ConsumerWidget {
           const CircularProgressIndicator(),
           const SizedBox(height: 16),
           Text(
-            'Applying code patch in background...',
+            'Applying app patch before restart...',
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 13,
@@ -610,18 +550,18 @@ class UpdateDialog extends ConsumerWidget {
         const SizedBox(height: 18),
         Row(
           children: [
-            if (state.canSkip) ...[
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Close'),
-                ),
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Close'),
               ),
-              const SizedBox(width: 10),
-            ],
+            ),
+            const SizedBox(width: 10),
             Expanded(
               child: FilledButton(
-                onPressed: () => controller.checkForUpdates(silent: false),
+                onPressed: state.canRetry
+                    ? () => controller.checkForUpdates()
+                    : null,
                 child: const Text('Retry'),
               ),
             ),

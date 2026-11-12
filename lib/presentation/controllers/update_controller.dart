@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:crypto/crypto.dart' as hashes;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:restart_app/restart_app.dart';
 
@@ -53,8 +54,8 @@ final updateControllerProvider =
 
 /// Orchestrates the update pipeline across the app.
 ///
-/// Supports silent background checking on launch and interactive manual checks
-/// from the About/Settings tab.
+/// App updates are explicit and optional. Pack synchronization uses a separate
+/// controller/transport and cannot require a binary upgrade to start a game.
 class UpdateController extends StateNotifier<UpdateState> {
   final VersionService _versionService;
   final OtaInstallerService _otaInstaller;
@@ -63,6 +64,7 @@ class UpdateController extends StateNotifier<UpdateState> {
   SemVer? _localVersion;
   SemVer? _minRequired;
   RemoteVersion? _remoteVersion;
+  UpdateFullApk? _downloadedApkDecision;
   final _pendingOperations = <Future<void>>{};
   bool _gameplayPaused = false;
   int _operationEpoch = 0;
@@ -128,67 +130,38 @@ class UpdateController extends StateNotifier<UpdateState> {
   // Check for updates
   // -------------------------------------------------------------------------
 
-  /// Runs the update check.
-  ///
-  /// If [silent] is true, network failures or up-to-date states will complete
-  /// silently without surfacing errors to avoid interrupting gameplay.
-  Future<void> checkForUpdates({bool silent = false}) =>
-      _track((epoch) => _checkForUpdates(silent: silent, epoch: epoch));
+  /// Explicitly check availability. This never downloads or applies a patch.
+  Future<void> checkForUpdates() => _track(_checkForUpdates);
 
-  Future<void> _checkForUpdates({
-    required bool silent,
-    required int epoch,
-  }) async {
+  Future<void> _checkForUpdates(int epoch) async {
     if (!_canContinue(epoch)) return;
     if (!kReleaseMode) {
-      state = UpdateCompleted(
-        silent
-            ? ''
-            : 'Updates require the signed release app. Debug/profile builds use '
-                  'development signing. Install the release APK '
-                  'to test updates; removing a development installation erases its local data.',
+      state = const UpdateCompleted(
+        'Updates require the signed release app. Debug/profile builds use '
+        'development signing. Install the release APK '
+        'to test updates; removing a development installation erases its local data.',
       );
       return;
     }
     state = const UpdateChecking();
     if (!_canContinue(epoch)) return;
-
     try {
-      // 1. Resolve local installed version
       _localVersion = await _versionService.getLocalVersion();
       if (!_canContinue(epoch)) return;
       final local = _localVersion!;
-
-      // 2. First check if a Shorebird patch is ready
       final isSbAvailable = await _shorebirdPatch.isShorebirdAvailable();
       if (!_canContinue(epoch)) return;
       if (isSbAvailable) {
         final hasPatch = await _shorebirdPatch.checkForPatch();
         if (!_canContinue(epoch)) return;
         if (hasPatch) {
-          if (silent) {
-            // Apply patch silently in the background
-            final applied = await _shorebirdPatch.downloadAndApplyPatch();
-            if (!_canContinue(epoch)) return;
-            if (applied) {
-              state = const UpdateCompleted(
-                'New patch installed. Restart anytime to apply.',
-              );
-            } else {
-              state = const UpdateCompleted();
-            }
-            return;
-          } else {
-            if (!_canContinue(epoch)) return;
-            state = UpdateAvailable(
-              decision: const UpdateShorebirdPatch(),
-              currentVersion: local.toString(),
-              latestVersion: local.toString(),
-              releaseNotes:
-                  'Over-the-air code patch available with instant bug fixes and improvements.',
-            );
-            return;
-          }
+          state = UpdateAvailable(
+            decision: const UpdateShorebirdPatch(),
+            currentVersion: local.toString(),
+            latestVersion: local.toString(),
+            releaseNotes: 'An optional app patch is available.',
+          );
+          return;
         }
       }
 
@@ -199,28 +172,22 @@ class UpdateController extends StateNotifier<UpdateState> {
         if (!_canContinue(epoch)) return;
         _remoteVersion = remote;
       } on TimeoutException {
-        if (!silent && _canContinue(epoch)) {
+        if (_canContinue(epoch)) {
           state = const UpdateError(
             message: 'Connection timed out while checking for updates.',
           );
-        } else if (_canContinue(epoch)) {
-          state = const UpdateCompleted();
         }
         return;
       } on SocketException {
-        if (!silent && _canContinue(epoch)) {
+        if (_canContinue(epoch)) {
           state = const UpdateError(
             message: 'No internet connection to check for updates.',
           );
-        } else if (_canContinue(epoch)) {
-          state = const UpdateCompleted();
         }
         return;
       } catch (e) {
-        if (!silent && _canContinue(epoch)) {
+        if (_canContinue(epoch)) {
           state = UpdateError(message: 'Failed to check for updates: $e');
-        } else if (_canContinue(epoch)) {
-          state = const UpdateCompleted();
         }
         return;
       }
@@ -242,9 +209,7 @@ class UpdateController extends StateNotifier<UpdateState> {
       switch (decision) {
         case UpdateNone():
           state = UpdateCompleted(
-            silent
-                ? ''
-                : 'You are running the latest version (v${local.toString()})',
+            'You are running the latest version (v${local.toString()})',
           );
 
         case UpdateFullApk():
@@ -253,13 +218,10 @@ class UpdateController extends StateNotifier<UpdateState> {
               deviceAbis.isNotEmpty &&
               !deviceAbis.contains('arm64-v8a')) {
             if (!_canContinue(epoch)) return;
-            state = silent
-                ? const UpdateCompleted()
-                : const UpdateError(
-                    message:
-                        'This release requires a 64-bit ARM Android device.',
-                    canRetry: false,
-                  );
+            state = const UpdateError(
+              message: 'This release requires a 64-bit ARM Android device.',
+              canRetry: false,
+            );
             return;
           }
           state = UpdateAvailable(
@@ -272,37 +234,20 @@ class UpdateController extends StateNotifier<UpdateState> {
           );
 
         case UpdateShorebirdPatch():
-          if (silent) {
-            // Silently download and apply the patch
-            final applied = await _shorebirdPatch.downloadAndApplyPatch();
-            if (applied && _canContinue(epoch)) {
-              state = const UpdateCompleted(
-                'Patch downloaded. Restart anytime.',
-              );
-            } else if (_canContinue(epoch)) {
-              state = const UpdateCompleted();
-            }
-          } else {
-            state = UpdateAvailable(
-              decision: decision,
-              currentVersion: local.toString(),
-              latestVersion: remote.latestVersion,
-              releaseNotes: remote.releaseNotes.isNotEmpty
-                  ? remote.releaseNotes
-                  : 'Fast OTA patch available.',
-            );
-          }
+          state = UpdateAvailable(
+            decision: decision,
+            currentVersion: local.toString(),
+            latestVersion: remote.latestVersion,
+            releaseNotes: remote.releaseNotes,
+          );
       }
     } catch (e) {
       debugPrint('UpdateController.checkForUpdates error: $e');
       if (!_canContinue(epoch)) return;
-      if (silent) {
-        state = const UpdateCompleted();
-      } else {
-        state = const UpdateError(
-          message: 'An unexpected error occurred during version check.',
-        );
-      }
+      state = UpdateError(
+        message:
+            'Could not check app updates. Installed Packs remain available offline: $e',
+      );
     }
   }
 
@@ -323,16 +268,31 @@ class UpdateController extends StateNotifier<UpdateState> {
       return;
     }
 
-    // Clean stale APKs first
-    await _otaInstaller.cleanStaleApks();
-    if (!_canContinue(epoch)) return;
+    final uri = Uri.tryParse(decision.apkUrl);
+    final expectedHash = decision.sha256;
+    if (uri == null ||
+        uri.scheme != 'https' ||
+        uri.host.isEmpty ||
+        uri.userInfo.isNotEmpty ||
+        expectedHash == null ||
+        !RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(expectedHash)) {
+      state = const UpdateError(
+        message:
+            'The app update has no valid secure download and checksum. Check again later.',
+        canRetry: false,
+      );
+      return;
+    }
 
-    state = const UpdateDownloading(progress: 0, speedText: '', etaText: '');
-    if (!_canContinue(epoch)) return;
-
+    _downloadedApkDecision = null;
     try {
+      await _otaInstaller.cleanStaleApks();
+      if (!_canContinue(epoch)) return;
+      state = const UpdateDownloading(progress: 0, speedText: '', etaText: '');
+      if (!_canContinue(epoch)) return;
       final apkFile = await _otaInstaller.downloadApk(
         decision.apkUrl,
+        expectedSha256: expectedHash,
         onProgress: (progress) {
           if (!_canContinue(epoch)) return;
           state = UpdateDownloading(
@@ -346,6 +306,7 @@ class UpdateController extends StateNotifier<UpdateState> {
       );
 
       if (!_canContinue(epoch)) return;
+      _downloadedApkDecision = decision;
       state = const UpdateInstalling();
       if (!_canContinue(epoch)) return;
 
@@ -358,10 +319,10 @@ class UpdateController extends StateNotifier<UpdateState> {
     } catch (e) {
       debugPrint('APK download/install error: $e');
       if (!_canContinue(epoch)) return;
-      state = UpdateError(
+      state = const UpdateError(
         message: 'Download or installation failed. Please try again.',
         canRetry: true,
-        canSkip: !decision.mandatory,
+        canSkip: true,
       );
     }
   }
@@ -371,31 +332,50 @@ class UpdateController extends StateNotifier<UpdateState> {
 
   Future<void> _launchDownloadedApk(int epoch) async {
     if (!_canContinue(epoch)) return;
+    final decision = _downloadedApkDecision;
+    if (decision?.sha256 == null) {
+      state = const UpdateError(
+        message: 'Check for app updates and download again before installing.',
+        canRetry: false,
+      );
+      return;
+    }
     try {
       final file = await _otaInstaller.getDownloadedApk();
       if (!_canContinue(epoch)) return;
-      if (file != null && file.existsSync()) {
-        state = const UpdateInstalling();
-        if (!_canContinue(epoch)) return;
-        await _otaInstaller.installApk(file);
-        if (!_canContinue(epoch)) return;
-        state = const UpdateCompleted(
-          'Installer launched. Follow the on-screen prompt to finish.',
+      if (file == null || !await file.exists()) {
+        state = const UpdateError(
+          message: 'Downloaded app update is missing. Download it again.',
+          canRetry: false,
         );
-      } else {
+        return;
+      }
+      final digest = await hashes.sha256.bind(file.openRead()).first;
+      if (!_canContinue(epoch)) return;
+      if (digest.toString() != decision!.sha256!.toLowerCase()) {
+        _downloadedApkDecision = null;
+        await _otaInstaller.cleanStaleApks();
         if (!_canContinue(epoch)) return;
         state = const UpdateError(
           message:
-              'Downloaded package not found. Please try downloading again.',
-          canRetry: true,
+              'The cached app update failed verification. Download it again.',
+          canRetry: false,
         );
+        return;
       }
-    } catch (e) {
-      debugPrint('Launch installer error: $e');
+      state = const UpdateInstalling();
       if (!_canContinue(epoch)) return;
-      state = UpdateError(
-        message: 'Failed to launch installer: $e',
-        canRetry: true,
+      await _otaInstaller.installApk(file);
+      if (!_canContinue(epoch)) return;
+      state = const UpdateCompleted(
+        'Installer launched. Follow the on-screen prompt to finish.',
+      );
+    } catch (error) {
+      if (!_canContinue(epoch)) return;
+      state = const UpdateError(
+        message:
+            'The app update could not be verified or installed. Download it again.',
+        canRetry: false,
       );
     }
   }
