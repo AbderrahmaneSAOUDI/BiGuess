@@ -58,11 +58,11 @@ void main() {
   );
 
   test(
-    'empty storage and explicit rollback retain playable legacy content',
+    'empty storage uses empty sqlite repository and explicit rollback retains playable legacy content',
     () async {
       final empty = await LocalContentRuntime.open(supportDirectory: directory);
-      expect(empty.repository, isA<LegacyManifestContentRepository>());
-      expect(empty.repository.getTopics(), isNotEmpty);
+      expect(empty.usesSqlite, isTrue);
+      expect(empty.repository.getTopics(), isEmpty);
       empty.close();
       final installed = await seed();
       installed.close();

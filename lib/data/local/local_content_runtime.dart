@@ -98,9 +98,6 @@ final class LocalContentRuntime {
         retirements = await store.readRetirements();
       }
       final installed = await store.readAllInstalled();
-      if (installed.isEmpty && retirements.isEmpty) {
-        return LocalContentRuntime._(legacy, store);
-      }
       final topics = <String, Topic>{};
       for (final local in installed) {
         final topic = local.manifest.topic;
@@ -123,13 +120,15 @@ final class LocalContentRuntime {
     } catch (error) {
       sql?.close();
       // Never delete/repair source generations or a failed database to recover.
-      final fallback = readableManagement && retirements.isEmpty
-          ? legacy
-          : _RetirementFallback(
-              legacy,
-              retirements.map((r) => r.packId).toSet(),
-              excludeAll: !readableManagement,
-            );
+      final fallback = useLegacy
+          ? (readableManagement && retirements.isEmpty
+              ? legacy
+              : _RetirementFallback(
+                  legacy,
+                  retirements.map((r) => r.packId).toSet(),
+                  excludeAll: !readableManagement,
+                ))
+          : _RetirementFallback(legacy, const {}, excludeAll: true);
       return LocalContentRuntime._(fallback, null, error, retirements);
     }
   }

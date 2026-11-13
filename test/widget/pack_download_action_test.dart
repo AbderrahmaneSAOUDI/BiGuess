@@ -102,7 +102,11 @@ void main() {
       // Real private-file install and SQLite projection run outside fake time.
       await tester.runAsync(() async {
         await tester.tap(find.text('Retry download'));
-        for (var i = 0; i < 100 && !runtime.usesSqlite; i++) {
+        for (var i = 0;
+            i < 100 &&
+                runtime.repository.getInstalledCardsForPack('fixture-pack') ==
+                    null;
+            i++) {
           await Future<void>.delayed(const Duration(milliseconds: 10));
         }
       });
