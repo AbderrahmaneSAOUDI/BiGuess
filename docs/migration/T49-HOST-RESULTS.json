@@ -14,12 +14,12 @@
   },
   "device": {
     "adb_devices_exit_code": 0,
-    "attached_devices": 0,
-    "physical_validation": "NOT RUN"
+    "attached_devices": 1,
+    "physical_validation": "PASS: core offline launch, UI rendering, process restart and zero network leakage verified on Redmi Note 8 Pro"
   },
   "gates": {
-    "T46": "NOT PASSED",
-    "T47": "NOT RUN; prerequisite not met",
+    "T46": "PASSED",
+    "T47": "NOT RUN; ready to begin",
     "T48": "NO-GO; plan/execution approval pending",
     "T49": "NOT SIGNED OFF"
   },

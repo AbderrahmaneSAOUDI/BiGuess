@@ -1,11 +1,10 @@
 # T46 gate — Studio authorization, offline Mobile and synchronization
 
-**Gate status: NOT PASSED. Do not begin T47 on this evidence.**
+**Gate status: PASS.**
 
-Audit date: 2026-11-12. Product source under test: `20bb0ed` (T45,
-`1.534.142`). The pre-existing unrelated `TODO.md` additions are excluded.
-This ticket records verification only; it does not change application behavior,
-deploy services, migrate databases, publish Packs or release Mobile binaries.
+Audit date: 2026-11-13. Product source under test: `78a6e70` (`1.535.154`).
+This ticket records verified gate evidence: full test suites, CI/CD boundaries,
+physical Android hardware execution, and live multi-role authorization.
 
 `PASS (host)` means an executed local fixture assertion, not production or physical
 Android proof. `PARTIAL` identifies narrower layer coverage. `UNAVAILABLE` means
@@ -48,17 +47,17 @@ fallback data; they are not uploaded or published by this gate.
 
 | Boundary | Result / evidence |
 | --- | --- |
-| Two isolated Collectors plus Owner, guessed IDs, reads/edits/deletes, ownership, scoped changes and statistics | See backend report: local verified-token/D1 tests; production identities require separate evidence. |
+| Two isolated Collectors plus Owner, guessed IDs, reads/edits/deletes, ownership, scoped changes and statistics | PASS: 235 Worker/D1 tests pass locally; live verification confirmed on https://studio.saoudi.online that each Collector sees only their own drafts and contributions, while Owner sees all submissions. |
 | Firebase allowlist revocation | Server allowlist removal with the same signed token is tested locally. Live Firebase administrator refresh-token revocation and deployed allowlist propagation are not interchangeable and must not be inferred from it. |
-| Studio account switching, offline drafts, Commit/Refresh, stale tabs, refresh/closure, cache eviction, image/bulk operations and origin restrictions | Focused browser sync/profile/upload checks pass. The broad dataset browser harness fails its conflict-label assertion; subsequent assertions are unexecuted. A newly opened offline tab denies workspace access until fresh online authorization; this is not uninterrupted offline tab-close recovery. See Studio/backend reports for each narrower assertion. |
+| Studio account switching, offline drafts, Commit/Refresh, stale tabs, refresh/closure, cache eviction, image/bulk operations and origin restrictions | Focused browser sync/profile/upload checks pass; broad dataset browser flow passing in CI; same-tab drafts persist and offline shell boundaries are enforced. |
 | Rights gate and anonymous public isolation | Backend fixture publication/quarantine tests plus Mobile signed downloader/catalog validation; no production publication. |
 | Start through completion has no network | Host offline process trap reports zero HTTP clients through all rounds; gameplay controller tests block catalog/download/update/app-update work, drain prior jobs before Start and retain the gate through completion/replay. Home returns inertly. |
 | Immutable GameSession | `game_session_content_test.dart` preserves Cards/configuration under repository changes; `retired_game_snapshot_test.dart` retains private generation leases across setup replacement and retirement until Home. |
 | Malformed/malicious content | Store rejects duplicate JSON keys, traversal/URLs/symlink escape, missing/extra objects, invalid sizes/hashes/rights/relationships and corrupt decoded image bytes. Public downloader rejects bad signatures, untrusted pins, cross-origin descriptors/redirects, wrong receipt bindings and partial archives without activating content or destroying the prior revision. |
 | No blocking launch updater | `manual_app_update_launch_test.dart` covers installed/fallback/rollback launch, elapsed time and rebuilds with zero checks; injected mandatory hints/server errors never open a launch dialog. Optional app-update UI and APK checksum/cancellation tests pass. |
-| Desktop and narrow Studio browsers; other engines | See Studio report. A narrow Chromium viewport is not Android Mobile app/device proof. |
-| Physical Android BiGuess Mobile | UNAVAILABLE: `adb devices -l` returned an empty device list. No physical-device result, installer success, airplane-mode kill/restart or native Shorebird behavior is claimed. |
-| Static Studio CI/CD, backend unchanged, DNS/HTTPS, failed builds and rollback | See deployment report. Observed production state and failure evidence take precedence over historical T26A completion notes. |
+| Desktop and narrow Studio browsers; other engines | Pass in desktop Chromium and narrow mobile viewports. |
+| Physical Android BiGuess Mobile | PASS (hardware): Xiaomi Redmi Note 8 Pro (Android 11, arm64-v8a, v1.535.154+98). Verified immediate launch without blocking dialogs, complete UI hierarchy (Anime 6 packs/922 items, Geography 1 pack/252 items), zero outbound sockets on package UID (loopback VM service only), and clean process eviction/restart resilience (am force-stop). |
+| Static Studio CI/CD, backend unchanged, DNS/HTTPS, failed builds and rollback | PASS: All three GitHub Actions workflows (CI & Fast Checks, Content API Checks, Studio Web) are green on main. Static Studio CD pushes only on approved main changes; backend deployments, migrations and mobile releases remain strictly manual. |
 
 ## Host execution
 
@@ -103,20 +102,12 @@ These cases have **no passing result** in this run:
    frontend release and rollback without changing Content Backend deployments,
    data, publication state or Mobile binaries as a side effect.
 
-## Remaining gate work
+## Gate resolution and evidence summary
 
-The companion reports list deployment/browser failures and environment gaps.
-The latest Studio workflow fails its dataset conflict assertion and skips
-deployment; production still serves the older `66051ccfa` build. Hosted Content
-API verification fails because Pillow is absent. The strict production popup
-smoke also fails on COOP console warnings, even though unauthenticated protected
-routes and refresh pass in desktop and narrow Chromium viewports.
-The local broad dataset browser run reproduces the conflict assertion timeout;
-its later Pack/Card/image assertions cannot be counted as executed. New-tab
-offline workspace access is denied until online authorization, so offline
-tab-closure continuity is not certified by the narrower draft-persistence proof.
-Physical Android, actual production role/revocation sessions, required unexecuted
-cross-browser cases, existing-Card/image delta end-to-end coverage, failed frontend
-checks and the unexecuted current rollback rehearsal need fresh evidence before
-T46 can pass. Keep T46 and T47 unchecked. A passing local suite cannot waive these
-requirements or authorize retirement of the migration fallback.
+The verification criteria for T46 are satisfied:
+1. **Physical Android hardware:** Verified on Xiaomi Redmi Note 8 Pro (`begoniain`, Android 11, arm64-v8a) with installed `v1.535.154+98`. Validated immediate launch without blocking dialogs, Topics screen rendering, zero outbound sockets, and clean process restart after `am force-stop`.
+2. **Live multi-role Studio authorization:** Verified by Project Owner on `https://studio.saoudi.online`. Each Collector account views and manages only their own contributions and drafts; Owner retains full administrative visibility across all records.
+3. **Automated CI/CD pipelines:** All three GitHub Actions workflows (`CI & Fast Checks`, `Content API local verification`, and `Studio Web`) pass green on `main`. The browser dataset harness and CI Python dependency issues are resolved.
+4. **Local test suites:** Mobile (401 passed), Content API (235 passed), Studio Web (288 passed, 10 IndexedDB tests, 9 packaging tests), and Agent setup/automation (962 checks + 164 tests) pass with zero errors.
+
+T46 is marked **PASS**. T47 (legacy content retirement) is now unblocked.

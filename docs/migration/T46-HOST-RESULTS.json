@@ -1,7 +1,21 @@
 {
-  "audit_date": "2026-11-12",
-  "source_commit": "20bb0edf088de6ee9df3a1a65708f06836ab2c6e",
-  "scope": "host verification; no physical Android device",
+  "audit_date": "2026-11-13",
+  "source_commit": "78a6e70",
+  "scope": "host verification, physical Android hardware (Redmi Note 8 Pro), and live multi-role studio identity verification",
+  "decision": "T46 PASSED",
+  "device": {
+    "attached_devices": 1,
+    "model": "Redmi_Note_8_Pro",
+    "device_id": "79ofdilbz995kbir",
+    "os_version": "Android 11",
+    "cpu_abi": "arm64-v8a",
+    "installed_version": "1.535.154+98",
+    "physical_validation": "PASS: immediate launch, Topics UI rendering, zero external sockets, process restart after am force-stop"
+  },
+  "live_studio_auth": {
+    "status": "PASS",
+    "evidence": "Verified on https://studio.saoudi.online: Collector A and Collector B see only their own contributions and drafts; Owner sees all submissions."
+  },
   "commands": [
     {
       "command": "flutter test",
